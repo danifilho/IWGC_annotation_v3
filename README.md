@@ -1,329 +1,386 @@
-# IWGC Annotation v3: BRAKER3 + Iso-Seq
+# IWGC Genome Annotation Pipeline v3
 
-Structural and functional genome annotation for weed genomes in the
-International Weed Genomics Consortium (IWGC), first applied to
-***Phalaris minor*** (`PhaMi`, allotetraploid, 4.92 Gb, 15 sequences).
+Structural and functional genome annotation for the **International Weed Genomics Consortium (IWGC)**, built with Snakemake and Singularity on SLURM clusters (developed on MSU ICER HPCC).
 
-This repository contains three things:
+- **Structural annotation:** repeat soft-masking, then **BRAKER3** with protein evidence plus **PacBio Iso-Seq** long reads, then a clean GFF3 with IWGC gene IDs, protein/CDS FASTA and BUSCO.
+- **Functional annotation:** MMseqs2 (NCBI, UniRef50, herbicide-resistance set), InterProScan, Pfam, SignalP/TargetP and MultiLoc2. The results are merged into one TSV and a functional GFF.
 
-1. A **diagnosis** of why an earlier BRAKER run on *P. minor* produced very poor BUSCO scores.
-2. A corrected **structural pipeline** (BRAKER3 in ETP mode, trained once on the whole genome, using Iso-Seq reads and a large protein database). It reaches the same BUSCO completeness as the MAKER-based v2 annotation in about **1/10 of the wall-clock time**.
-3. The **functional pipeline** (IWGC functional Snakefile) with a fix for a race condition that silently dropped the NCBI homology search.
+v3 replaces MAKER (v2, [IWGC_Structural](https://github.com/danifilho/IWGC_Structural)) with BRAKER3. On *Phalaris minor* (4.9 Gb, allotetraploid) it reaches the same BUSCO completeness as MAKER (**95.9 % vs 96.1 %**) in **~11 h instead of ~5 days**. The functional module is [IWGC_Funcional](https://github.com/danifilho/IWGC_Funcional) plus bug fixes and two new output steps.
 
-> **Status:** structural annotation finished and validated. Functional annotation of v3 is still running on MSU HPCC (InterProScan stage); this README will be updated with its results.
+> **Validation status (2026-10-21)**
+>
+> - **Tested at scale:** every structural step ran on the full *P. minor* genome as standalone SLURM jobs, which produced the results in `results/PhaMi`. The functional Snakefile is IWGC_Funcional's, already used for v2.
+> - **Being validated now:** the structural `Snakefile` that packages those steps (single-chromosome end-to-end test) and the two new functional rules (`order_tsv`, `agat_functional_gff`). The MMseqs `/tmp` fix passed a Snakemake dry run. This note will be removed once both tests finish.
 
 ---
 
 ## Contents
 
-- [Results at a glance](#results-at-a-glance)
-- [Why the previous BRAKER run failed](#why-the-previous-braker-run-failed)
-- [What v3 changes](#what-v3-changes)
-- [Repository layout](#repository-layout)
-- [Structural pipeline](#structural-pipeline)
-- [Functional pipeline](#functional-pipeline)
-- [Output: PhaMi v3 annotation](#output-phami-v3-annotation)
-- [Runtime: BRAKER3 vs MAKER](#runtime-braker3-vs-maker)
-- [HPCC notes: quotas and containers](#hpcc-notes-quotas-and-containers)
-- [Known issues and open questions](#known-issues-and-open-questions)
-- [Requirements](#requirements)
-- [Contact](#contact)
+1. [Pipeline overview](#1-pipeline-overview)
+2. [Repository layout](#2-repository-layout)
+3. [Requirements](#3-requirements)
+4. [Container images](#4-container-images)
+5. [Databases and evidence](#5-databases-and-evidence)
+6. [Setup](#6-setup)
+7. [Configuration](#7-configuration)
+8. [Running](#8-running)
+9. [Outputs](#9-outputs)
+10. [Example results: *Phalaris minor*](#10-example-results-phalaris-minor)
+11. [What changed from v2](#11-what-changed-from-v2)
+12. [Troubleshooting](#12-troubleshooting)
+13. [Citations](#13-citations)
+14. [Contact](#14-contact)
 
 ---
 
-## Results at a glance
+## 1. Pipeline overview
 
-BUSCO v5.8.2, `poales_odb10` (n = 4,896), protein mode.
+```
+STRUCTURAL  (structural/Snakefile)
+  genome.fasta ─► RepeatModeler ─► RepeatMasker ─► bedtools soft-mask ─┐  (or a pre-masked genome)
+  proteins ─────► protein DB ──────────────────────────────────────────┤
+  Iso-Seq reads ─► minimap2 splice:hq ─► sorted BAM ───────────────────┴─► BRAKER3 (ETP, one genome-wide model)
+                                                                              │
+                         BUSCO ◄── proteins/CDS (gffread) ◄── GFF3 with IWGC IDs
+                                                                              │
+FUNCTIONAL  (functional/Snakefile)                                            ▼
+  GFF3 ─► AGAT longest isoform ─► gffread -J proteins ─┬─► MMseqs2 × {NCBI, herbicide-resistance, UniRef50}
+                                                       ├─► InterProScan (chunks) ─► MultiLoc2
+                                                       ├─► HMMER / Pfam
+                                                       └─► SignalP + TargetP
+                         ─► functional_annotation.tsv (assembly order) + <SP>.functional.gff (AGAT)
+```
 
-| | Previous BRAKER run | v3 control | **v3 final** | MAKER v2 (reference) |
-|---|---|---|---|---|
-| Method | BRAKER2, 15 per-chromosome models, *Lolium* proteins only, Iso-Seq only in TSEBRA | BRAKER2, **1 genome-wide model**, Lolium + OrthoDB proteins | **BRAKER3 (ETP), 1 genome-wide model, Lolium + OrthoDB proteins + Iso-Seq FLNC reads** | MAKER est2genome + protein2genome |
-| AUGUSTUS accuracy | 0.21 – 0.42 | 0.76 | **0.75** | – |
-| Genes | ~55.6 k | 96.8 k | **45.0 k** | 55.1 k protein-coding (+2,039 tRNA) |
-| Transcripts | 57.6 k | 102.2 k | **49.2 k** | 55.1 k |
-| Single-exon transcripts | 62 % | 38 % | **25 %** | – |
-| CDS exons per transcript | 2.7 | 3.2 | **5.3** | – |
-| Median protein length (aa) | 221 | 219 | **353** | – |
-| **BUSCO C** [S, D] | 67.7 % [23.0, 44.7] | 71.5 % [16.8, 54.7] | **95.9 % [18.6, 77.3]** | 96.1 % [17.6, 78.4] |
-| BUSCO F | 2.3 % | 5.4 % | **0.2 %** | 1.5 % |
-| **BUSCO M** | 30.1 % | 23.1 % | **3.9 %** | 2.5 % |
-| Wall-clock (gene prediction) | – | 16 h | **11 h** | ~5 days |
-
-How to read these numbers:
-
-- **Duplicated BUSCOs are expected.** *P. minor* is an allotetraploid with B and C subgenomes, so most conserved genes are annotated once in each homeolog.
-- **The previous run's BUSCO** was measured on all isoforms. The v3 and MAKER numbers use the longest isoform per gene, which is the stricter measure.
-- **The 0 % BUSCO** reported for the previous run's merged `braker_all.aa` was not a biological result. `hmmsearch` aborts on proteins longer than 100,000 aa (`Target sequence length > 100K`), and that file contained 216 proteins longer than 20,000 aa.
-
-**Bottom line:** v3 fixes the BRAKER run (C 67.7 % → 95.9 %, M 30.1 % → 3.9 %). It matches the MAKER v2 annotation in completeness, with about 10 k fewer genes and roughly 10× less wall-clock time. The Iso-Seq data was sufficient all along; it simply never reached BRAKER's training step.
+Step-by-step details, with the result of every step on *P. minor*:
+- [docs/STRUCTURAL.md](docs/STRUCTURAL.md)
+- [docs/FUNCTIONAL.md](docs/FUNCTIONAL.md)
 
 ---
 
-## Why the previous BRAKER run failed
-
-All points below were checked directly in the previous run's `braker.log` files, scripts and outputs.
-
-1. **BRAKER ran as BRAKER2, not BRAKER3.** The only evidence given to `braker.pl` was `--prot_seq`, and every log says:
-   ```
-   Only Protein input detected, BRAKER will be executed in EP mode (BRAKER2).
-   ```
-   The Iso-Seq data was added afterwards as intron hints to **TSEBRA**. TSEBRA only *selects* among gene models that already exist; it cannot create or correct them. So the Iso-Seq never influenced GeneMark or AUGUSTUS training.
-
-2. **The protein database was only *Lolium rigidum*.** `braker_prot.faa` contained 54,112 proteins. The OrthoDB Viridiplantae set (5.3 M proteins) was configured but never concatenated in (`prep: 54112 proteins for BRAKER`). BRAKER2 depends heavily on a broad protein set.
-
-3. **Fifteen independent models, one per chromosome.** Each chromosome trained its own GeneMark-EP and AUGUSTUS on a small gene set. AUGUSTUS accuracy after training was 0.21–0.42; the C-subgenome chromosomes were worst (Chr06C 0.21), and Chr00 had to reuse Chr01C's model. The resulting models show the damage: 62 % single-exon transcripts, a median protein of 221 aa, and "genes" spanning about 500 kb.
-
-4. **The 0 % BUSCO was a crash**, as described in [Results at a glance](#results-at-a-glance).
-
----
-
-## What v3 changes
-
-| Problem | Fix in v3 |
-|---|---|
-| Iso-Seq used only in TSEBRA | The 4.1 M Iso-Seq **FLNC reads** are spliced-aligned with minimap2 (`-ax splice:hq -uf`, as the BRAKER docs require) and passed with `--bam` to the `teambraker/braker3:isoseq` container, so BRAKER runs in **ETP mode (BRAKER3)**. The long-read StringTie inside GeneMark-ETP needs many reads per intron, so raw reads are used instead of collapsed transcripts. |
-| Lolium-only protein DB | *L. rigidum* + **OrthoDB Viridiplantae**: 5,364,589 proteins. |
-| 15 per-chromosome models | **One genome-wide BRAKER run**: a single GeneMark-ETP model and a single AUGUSTUS model (`PhaMi_v3_A_isoseq`). |
-| BUSCO crash on giant proteins | Evaluation drops proteins > 10,000 aa and uses the longest isoform per gene. |
-| Containers could not read inputs | Inputs symlinked into `/mnt/research` do not resolve inside Singularity, so the genome is copied as a real file and all mount points are bound. |
-| GeneMark file explosion (see [quotas](#hpcc-notes-quotas-and-containers)) | `99_quota_guard.sbatch` deletes per-chunk GeneMark files once each GeneMark step has finished. |
-| Output not in the lab format | `finalize_v3.py` writes a clean GFF3 with the lab ID scheme, plus protein/CDS FASTA. |
-
-A protein-only **control** (attempt B) uses the same proteins and the same single-model setup, without Iso-Seq. Comparing it with the previous run and with v3 separates the two effects:
-
-- **Single model + more proteins** (previous run → B): AUGUSTUS accuracy 0.4 → 0.76, but BUSCO only 67.7 % → 71.5 %. Because both changes were made together, their individual contributions cannot be separated.
-- **Adding Iso-Seq to training** (B → A): BUSCO 71.5 % → 95.9 %, and every gene-structure metric becomes plant-like.
-
----
-
-## Repository layout
+## 2. Repository layout
 
 ```
 IWGC_annotation_v3/
-├── structural/                  # BRAKER3 pipeline (SLURM)
-│   ├── config.sh                # all paths, containers, modules; edit this first
-│   ├── 00_setup.sbatch          # pull braker3:isoseq, build protein DB, AUGUSTUS configs
-│   ├── 01_isoseq_align.sbatch   # FLNC BAM -> FASTA -> minimap2 splice:hq -> sorted BAM
-│   ├── 02_braker.sbatch         # one genome-wide BRAKER run (A_isoseq | B_protein)
-│   ├── 03_eval.sbatch           # gene-set stats + BUSCO (longest isoform, >10k aa dropped)
-│   ├── 04_finalize.sbatch       # lab-format GFF3, proteins, CDS, BUSCO v3 vs v2
-│   ├── 99_quota_guard.sbatch    # file-quota guard for GeneMark per-chunk files
-│   ├── finalize_v3.py           # braker.gtf -> GFF3 with PhaMi IDs
-│   └── submit_all.sh            # submits 00 -> 01 -> 02 -> 03 with dependencies
-├── functional/                  # IWGC functional annotation (Snakemake)
-│   ├── Snakefile                # IWGC functional Snakefile + mmseqs tmp fix
-│   ├── config.yaml              # v3 config (GFF = PhaMi.v3.gff3)
-│   ├── run_functional_v3.sb     # Snakemake + TSV in assembly order + AGAT functional GFF
-│   ├── fix_mmseqs_ncbi.sb       # one-off rescue of the NCBI search (old Snakefile only)
-│   └── scripts/                 # functional_merge.py, ml2_one_by_one.sh
-└── results/
-    ├── PhaMi_v3/                # PhaMi.v3.gff3.gz, release stats, BUSCO v3 & MAKER v2
-    └── evaluation/              # stats + BUSCO for attempt A, control B, previous run
+├── structural/
+│   ├── Snakefile                 # structural workflow
+│   ├── config.yaml               # template: edit before running
+│   ├── run_structural.sb         # SLURM wrapper (one node)
+│   └── scripts/
+│       ├── finalize_gff3.py      # braker.gtf -> GFF3 with IWGC IDs
+│       ├── postprocess_proteins.sh
+│       ├── gene_set_stats.sh
+│       └── genemark_cleanup.sh   # keeps the file count under control during BRAKER
+├── functional/
+│   ├── Snakefile                 # functional workflow
+│   ├── config.yaml               # template: edit before running
+│   ├── run_functional.sb         # SLURM wrapper (one node)
+│   └── scripts/
+│       ├── functional_merge.py   # merges all results into the TSV
+│       ├── ml2_one_by_one.sh     # MultiLoc2 driver
+│       └── extract_hits.py       # NCBI hit subset for AGAT (repairs glued FASTA headers)
+├── docs/
+│   ├── STRUCTURAL.md             # every structural step + P. minor results
+│   ├── FUNCTIONAL.md             # every functional step + P. minor results
+│   ├── TROUBLESHOOTING.md        # errors seen in practice and how to fix them
+│   └── CASE_STUDY_PhaMi.md       # why an earlier BRAKER run failed; BRAKER3 vs MAKER
+└── results/PhaMi/
+    ├── structural/               # PhaMi.v3.gff3.gz, stats, BUSCO, Iso-Seq flagstat
+    ├── functional/               # functional TSV + GFF
+    └── comparison/               # BUSCO/stats of MAKER v2 and of the BRAKER2 runs
 ```
 
 ---
 
-## Structural pipeline
+## 3. Requirements
 
-### Inputs
+| Software | Version used | Notes |
+|---|---|---|
+| Snakemake | 9.13.7 | conda env (`iwgc`); also needs `biopython` 1.86 and `pandas` 2.3.3 |
+| SingularityCE / Apptainer | SingularityCE 4.1.2 (Apptainer 1.4.1 also used for pulls) | |
+| SLURM | — | optional; the `run_*.sb` wrappers run Snakemake on a single node |
+| Python | 3.13 (host) | only the standard library is used by the host-side scripts |
 
-| Input | Description |
+```bash
+conda create -n iwgc -c conda-forge -c bioconda snakemake=9.13.7 biopython pandas
+```
+
+**Hardware used for a 4.9 Gb genome:**
+- Structural: 1 node, 64 CPUs, 400 GB RAM. BRAKER itself uses 48 threads.
+- Functional: 1 node, 64 CPUs, 250 GB RAM.
+
+Plan for a scratch **file** quota as well as space; see [TROUBLESHOOTING #2](docs/TROUBLESHOOTING.md#2-scratch-file-quota-explodes-during-braker-genemark).
+
+---
+
+## 4. Container images
+
+All images go in `images/` inside each working directory, **with the file names below**. Library images are unsigned, so pull them with `-U`.
+
+### Structural
+
+| File in `images/` | Pull command | Tools inside (verified versions) |
+|---|---|---|
+| `braker3_isoseq.sif` | `singularity pull braker3_isoseq.sif docker://teambraker/braker3:isoseq` | BRAKER 3.0.8, GeneMark-ETP (long-read StringTie fork), AUGUSTUS 3.5.0, StringTie 2.2.1, DIAMOND 2.0.15, TSEBRA 1.1.2.4, samtools 1.13 |
+| `braker3.sif` (only for protein-only runs) | `singularity pull braker3.sif docker://teambraker/braker3:latest` | BRAKER 3.0.8, AUGUSTUS 3.5.0, GeneMark-ETP/EP, TSEBRA |
+| `minimap2.sif` | `singularity pull minimap2.sif docker://staphb/minimap2:2.26` | minimap2 2.26-r1175 |
+| `samtools.sif` | `singularity pull samtools.sif docker://staphb/samtools:1.19` | samtools 1.19 |
+| `gffread.sif` | `singularity pull -U gffread.sif library://danifilho/functional_annotation_images/gffread:latest` | gffread 0.12.7 |
+| `busco.sif` | `singularity pull busco.sif docker://ezlabgva/busco:v5.8.2_cv1` | BUSCO 5.8.2 |
+| `dfam_tetools.sif` (masking) | `singularity pull dfam_tetools.sif docker://dfam/tetools` | RepeatModeler 2.0.7, RepeatMasker 4.2.3 |
+| `bedtools.sif` (masking) | `singularity pull -U bedtools.sif library://danifilho/structural_annotation/bedtools:latest` | bedtools 2.30.0 |
+
+### Functional
+
+Source: [library://danifilho/functional_annotation_images](https://cloud.sylabs.io/library/danifilho/functional_annotation_images).
+
+| File in `images/` | Pull command | Tools inside (verified versions) |
+|---|---|---|
+| `agat.sif` | `singularity pull -U agat.sif library://danifilho/functional_annotation_images/agat:latest` | AGAT 1.4.0 |
+| `gffread.sif` | `singularity pull -U gffread.sif library://danifilho/functional_annotation_images/gffread:latest` | gffread 0.12.7 |
+| `mmseqs2.sif` | `singularity pull -U mmseqs2.sif library://danifilho/functional_annotation_images/mmseqs2:latest` | MMseqs2 (commit `ad5837b3444728411e6c90f8c6ba9370f665c443`) |
+| `iprscan.sif` | `singularity pull -U iprscan.sif library://danifilho/functional_annotation_images/iprscan:latest` | InterProScan 5.77-108.0 |
+| `hmmer3.sif` | `singularity pull -U hmmer3.sif library://danifilho/functional_annotation_images/hmmer3:latest` | HMMER 3.3 |
+| `sigtarp.sif` | `singularity pull -U sigtarp.sif library://danifilho/functional_annotation_images/sigtarp:latest` | SignalP 5.0b, TargetP 2.0 |
+| `multiloc2_v3.img` | `singularity pull -U multiloc2_v3.img library://danifilho/functional_annotation_images/multiloc2:latest` | MultiLoc2 (Python 2.7.18) |
+| `samtools.sif` | `singularity pull -U samtools.sif library://danifilho/functional_annotation_images/samtools:latest` | samtools 1.19.2 |
+
+> Versions were read from inside each image (`--version`) on 2026-10-21. `:latest` and `dfam/tetools` tags can move; check `--version` after pulling a new copy.
+
+---
+
+## 5. Databases and evidence
+
+### Structural evidence (`structural/inputs/`)
+
+| Input | Example (*P. minor*) | Notes |
+|---|---|---|
+| Genome FASTA | `phalaris_swapped.fasta`, 4.92 Gb, 15 sequences | Simple headers only (no spaces). |
+| Close-relative proteins | *Lolium rigidum* (APGP/CSIRO), 54,112 | |
+| Broad protein set | [OrthoDB Viridiplantae](https://bioinf.uni-greifswald.de/bioinf/partitioned_odb11/), 5.3 M | **Required in practice**: BRAKER's ProtHint needs it. |
+| Iso-Seq reads | `*.flnc.bam` from `isoseq refine`, 4.1 M reads | Also accepted: FASTA/FASTQ(.gz) of FLNC or HiFi reads. **Not** collapsed transcripts. |
+| BUSCO lineage | `busco_downloads/lineages/poales_odb10` | Download beforehand; compute nodes run BUSCO `--offline`. |
+
+Download OrthoDB Viridiplantae and a BUSCO lineage:
+```bash
+wget https://bioinf.uni-greifswald.de/bioinf/partitioned_odb11/Viridiplantae.fa.gz && gunzip Viridiplantae.fa.gz
+singularity exec images/busco.sif busco --download poales_odb10    # creates busco_downloads/
+```
+
+### Functional databases (`functional/databases/`)
+
+| Path | Content | Used by |
+|---|---|---|
+| `current/GenomesDatabase.v1.prot` | IWGC NCBI protein set (5.99 M proteins, FASTA + MMseqs index) | MMseqs2 `ncbi`: descriptions and AGAT product names |
+| `herb_res_prots/total_KO_labeled.fasta` | herbicide-resistance KO protein set | MMseqs2 `herbres` |
+| `mmseqs_db/uniref50` | UniRef50 MMseqs2 database (`mmseqs databases UniRef50 ...`) | MMseqs2 `uniref` |
+| `Pfam-A.hmm` (+ `hmmpress` files) | Pfam-A HMMs | `hmmscan` |
+| `interproscan-5.77-108.0/data` | InterProScan data release **matching the image** (5.77-108.0) | InterProScan |
+
+Setting up a second working directory? Hard-link the databases instead of copying them. On the same filesystem this costs neither space nor file quota:
+```bash
+cp -al /path/old_workdir/databases /path/new_workdir/databases
+```
+
+---
+
+## 6. Setup
+
+Each module runs in its **own working directory** (`volume_name`). Everything the containers read must be a **real file or hard link inside it**; see [TROUBLESHOOTING #1](docs/TROUBLESHOOTING.md#1-genome-file--does-not-exist-inside-a-container).
+
+```
+structural_workdir/                     functional_workdir/
+├── Snakefile                           ├── Snakefile
+├── config.yaml                         ├── config.yaml
+├── run_structural.sb                   ├── run_functional.sb
+├── scripts/                            ├── scripts/
+├── images/      (structural images)    ├── images/      (functional images)
+├── inputs/      genome, proteins,      ├── inputs/      genome + <SP>.v3.gff3
+│                Iso-Seq reads          └── databases/   (see above)
+└── busco_downloads/lineages/<lineage>/
+```
+
+```bash
+git clone https://github.com/danifilho/IWGC_annotation_v3.git
+mkdir -p $SCRATCH/PhaMi_v3 && cd $SCRATCH/PhaMi_v3
+cp -r IWGC_annotation_v3/structural structural
+cp -r IWGC_annotation_v3/functional functional
+# then: pull images into */images, place inputs, edit both config.yaml files
+```
+
+---
+
+## 7. Configuration
+
+### `structural/config.yaml`
+
+| Key | Meaning | *P. minor* value |
+|---|---|---|
+| `volume_name` | absolute path of the structural workdir | `/mnt/gs21/scratch/.../structural` |
+| `species_abbreviation` | IWGC code, used as the gene-ID prefix | `PhaMi` |
+| `fasta_file` | unmasked genome in `inputs/` | `phalaris_swapped.fasta` |
+| `softmasked_genome` | optional pre-masked genome in `inputs/`; `""` = run masking | `""` |
+| `protein_files` | list of protein FASTA files in `inputs/` | Lolium + Viridiplantae |
+| `isoseq_reads` | FLNC/HiFi reads in `inputs/` (`.bam`, `.fa[.gz]`, `.fq[.gz]`); `""` = proteins only | `PhaMi.flnc.bam` |
+| `repeatmodeler_threads`, `repeatmasker_threads` | masking threads | 64 |
+| `minimap2_threads` / `minimap2_index_batch` | alignment threads / `-I` (must exceed the genome size) | 32 / `16G` |
+| `braker_threads` | BRAKER threads (**≤ 48**) | 48 |
+| `braker_species` | name of the new AUGUSTUS model | `PhaMi_v3` |
+| `busco_lineage` | local lineage directory | `busco_downloads/lineages/poales_odb10` |
+| `busco_max_protein_length` | longer proteins are excluded from BUSCO | 10000 |
+| `busco_threads` | BUSCO threads | 16 |
+
+### `functional/config.yaml`
+
+| Key | Meaning |
 |---|---|
-| Soft-masked genome | EDTA library + RepeatMasker, 87–92 % masked per chromosome. Reused from the previous run. |
-| Protein evidence | *Lolium rigidum* (APGP/CSIRO) + OrthoDB Viridiplantae |
-| Iso-Seq | PacBio FLNC BAM (`isoseq3 refine` output), 4,116,976 reads |
-| BUSCO lineage | `poales_odb10`, local copy (compute nodes run BUSCO `--offline`) |
-
-### Steps
-
-| Step | Script | Resources | Time on *P. minor* |
-|---|---|---|---|
-| Setup | `00_setup.sbatch` | 4 CPU / 32 GB | 18 min (mostly the container pull) |
-| Iso-Seq alignment | `01_isoseq_align.sbatch` | 32 CPU / 120 GB | 10 min (31 GB peak RAM; 99.84 % of reads mapped) |
-| BRAKER3 | `02_braker.sbatch A_isoseq` | 48 CPU / 400 GB | **10 h 50 min** |
-| BRAKER2 control | `02_braker.sbatch B_protein` | 48 CPU / 400 GB | 15 h 56 min |
-| Evaluation | `03_eval.sbatch` | 16 CPU / 64 GB | 7–15 min |
-| Release + BUSCO | `04_finalize.sbatch` | 16 CPU / 64 GB | ~20 min |
-
-The core command (attempt A) is:
-
-```bash
-singularity exec braker3_isoseq.sif braker.pl \
-  --genome=PhaMi.softmasked.fa \
-  --prot_seq=proteins_v3.faa \
-  --bam=PhaMi.flnc.minimap2.bam \
-  --species=PhaMi_v3_A_isoseq \
-  --threads=48 --gff3
-```
-
-BRAKER itself warns that more than 48 threads can crash GeneMark.
-
-### Running it
-
-```bash
-cd structural/
-# 1. edit config.sh (V3, J, input paths, modules)
-# 2. submit everything with dependencies
-bash submit_all.sh
-# 3. in parallel, start the file-quota guard (strongly recommended)
-sbatch 99_quota_guard.sbatch
-# 4. when attempt A is done
-sbatch 04_finalize.sbatch
-```
-
-All jobs source `config.sh` from `$SLURM_SUBMIT_DIR`, so submit from `structural/`.
-
-### Lab-format GFF3 (`finalize_v3.py`)
-
-`braker.gtf` mixes AUGUSTUS, GeneMark.hmm3 and GeneMarkS-T records. `finalize_v3.py`:
-
-- rebuilds each transcript from its `CDS` and `stop_codon` lines. BRAKER predicts no UTRs, so exons equal CDS. Stop codons are folded into the CDS where a source leaves them out.
-- sorts genes in genome FASTA order (Chr01C…Chr07C, Chr01B…Chr07B, Chr00), then by start position.
-- assigns **the same ID scheme as the lab's v2 annotation**, with the counter increasing by 10 across the whole genome and never reset per chromosome:
-  ```
-  gene  PhaMiChr01Cg000010
-  mRNA  PhaMiChr01Cg000010-mRNA-1      (keeps braker_id=g4474.t1 for traceability)
-  exon  PhaMiChr01Cg000010-mRNA-1:1
-  CDS   PhaMiChr01Cg000010-mRNA-1:cds
-  ```
-- computes CDS phase from cumulative coding length.
-
-`04_finalize.sbatch` then uses gffread to extract proteins (terminal `*` removed) and CDS, writes a longest-isoform protein set and sanity checks, and runs BUSCO on both v3 and the MAKER v2 proteins.
+| `volume_name` | absolute path of the functional workdir |
+| `fasta_file` | genome in `inputs/` |
+| `final_filtering_gff` | structural GFF3 in `inputs/` (`<SP>.v3.gff3`) |
+| `species_name` | output prefix |
+| `mmseqs_databases` | list of `{name, path}`; the `ncbi` entry is required and also needs `ncbidata` (FASTA with descriptions) |
+| `multiloc_script` | `ml2_one_by_one.sh` (do not change) |
 
 ---
 
-## Functional pipeline
+## 8. Running
 
-This is the IWGC functional Snakefile, unchanged except for the MMseqs2 fix below. It runs:
-
-1. **AGAT** to keep the longest isoform, then **gffread** `-J` to keep complete models only.
-2. **MMseqs2** against NCBI (GenomesDatabase v1), a herbicide-resistance KO set and UniRef50, keeping the best hit per query at e < 1e-5.
-3. **InterProScan 5.77-108.0** in 2,000-protein chunks (GO, pathways, IPR), **HMMER/Pfam**, **SignalP + TargetP**, and **MultiLoc2** (which uses the InterProScan GO terms).
-4. `functional_merge.py` → `functional_annotation.tsv` with 11 columns.
-
-`run_functional_v3.sb` adds the two post-processing steps used for the v2 release:
-
-- reorders the TSV into **assembly order** (gffread output order) and keeps an alphabetical copy;
-- writes a **functional GFF** with `agat_sp_manage_functional_annotation.pl`, using the NCBI best hits, a hit-only subset of the NCBI FASTA, and the InterProScan TSV without the pathways column.
-
-### Bug fix: MMseqs2 race on `/tmp`
-
-The `mmseqs2` rule runs once per database, and Snakemake runs the three searches **in parallel**. All three used `/tmp` as the MMseqs tmp directory. MMseqs creates a `latest` symlink inside its tmp directory, so the parallel runs raced, and one search died almost immediately with:
-
-```
-Could not create symlink of /tmp/11310392332275771123!
-Error in rule mmseqs2: ... databases/current/GenomesDatabase.v1.prot
-```
-
-Because the pipeline runs with `--keep-going`, every other rule kept running for about a day before the missing NCBI search was noticed. The fix gives each database its own tmp directory inside the work volume:
-
-```diff
--  mmseqs easy-search {input.aa} {input.database} {output.ofmt6} /tmp --threads 20 ...
-+  rm -rf {volume}/tmp/mmseqs_{database_name} && mkdir -p {volume}/tmp/mmseqs_{database_name}
-+  mmseqs easy-search {input.aa} {input.database} {output.ofmt6} /data/tmp/mmseqs_{database_name} --threads 20 ...
-+  rm -rf {volume}/tmp/mmseqs_{database_name}
-```
-
-This was verified with `snakemake -n`. `fix_mmseqs_ncbi.sb` reruns only the NCBI search for a workdir that was started with the old Snakefile; with the fixed Snakefile it is not needed.
-
-### Running it
+### Structural
 
 ```bash
-cd /path/to/functional_workdir    # contains Snakefile, config.yaml, images/, databases/, inputs/
-# config.yaml: volume_name, fasta_file, final_filtering_gff, species_name
-sbatch run_functional_v3.sb
+cd structural_workdir
+snakemake -n                       # dry run: check the job list
+sbatch run_structural.sb           # or run directly:
+# snakemake --cores 64 --use-singularity --singularity-args "-B $PWD" --rerun-triggers mtime --keep-going --rerun-incomplete -p
 ```
 
-To set up a second workdir next to an existing one without using extra space or file quota, hard-link the databases and genome:
+Check early that BRAKER runs in the expected mode:
+```bash
+grep "will be executed in" braker_outputs/braker.log
+# Both protein and RNA-Seq data in input detected. BRAKER will be executed in ETP mode (BRAKER3).
+```
+
+### Functional
 
 ```bash
-cp -al /old/functional/databases  /new/functional/databases
-ln     /old/functional/inputs/genome.fasta /new/functional/inputs/
+cp structural_workdir/final_outputs/PhaMi.v3.gff3 functional_workdir/inputs/
+ln structural_workdir/inputs/<genome>.fasta functional_workdir/inputs/     # hard link
+cd functional_workdir
+snakemake -n
+sbatch run_functional.sb
+```
+
+After each run, check for failed rules (`--keep-going` does not stop on errors):
+```bash
+grep -n "Error in rule" *.err
 ```
 
 ---
 
-## Output: PhaMi v3 annotation
+## 9. Outputs
 
-`results/PhaMi_v3/PhaMi.v3.gff3.gz` contains gene / mRNA / exon / CDS records:
+### Structural (`structural_workdir/`)
 
-| | |
+| Path | Content |
 |---|---|
-| Genes | 44,965 |
-| mRNAs | 49,216 |
-| Longest-isoform proteins | 44,965 |
-| Complete models used for functional annotation | 44,960 |
-| Edge cases (out of 49,216) | 1 internal stop, 3 not starting with Met, 6 CDS not a multiple of 3 |
+| `final_outputs/<SP>.v3.gff3` | **final annotation** (gene / mRNA / exon / CDS; IWGC IDs) |
+| `final_outputs/<SP>.v3.proteins.fa`, `<SP>.v3.cds.fa` | all isoforms, same IDs as the GFF3 |
+| `final_outputs/<SP>.v3.longest.proteins.fa` | one protein per gene |
+| `final_outputs/<SP>.v3.stats.txt` | gene-set statistics and sanity checks |
+| `busco_outputs/<SP>.v3.busco_summary.txt` | BUSCO summary (+ `busco_<SP>.tar.gz`) |
+| `braker_outputs/` | full BRAKER run (`braker.gtf`, `braker.log`, hints, GeneMark-ETP, AUGUSTUS) |
+| `braker_inputs/augustus_config/species/<braker_species>` | **trained AUGUSTUS model** (reusable) |
+| `braker_inputs/isoseq.minimap2.bam`, `isoseq.flagstat.txt` | Iso-Seq alignment |
+| `masking_outputs/`, `repeat_modeler_outputs/`, `repeat_masker_outputs/` | soft-masked genome, repeat library, repeat GFF |
 
-Genes per chromosome:
+Gene IDs follow the IWGC scheme, with the counter increasing by 10 across the genome in FASTA order:
 
-| Subgenome C | genes | Subgenome B | genes |
-|---|---|---|---|
-| Chr01C | 3,993 | Chr01B | 4,421 |
-| Chr02C | 3,428 | Chr02B | 3,960 |
-| Chr03C | 3,213 | Chr03B | 3,614 |
-| Chr04C | 2,959 | Chr04B | 3,416 |
-| Chr05C | 2,686 | Chr05B | 2,929 |
-| Chr06C | 2,383 | Chr06B | 2,636 |
-| Chr07C | 2,475 | Chr07B | 2,800 |
-| **Total C** | **21,137** | **Total B** | **23,776** |
+```
+PhaMiChr01Cg000010                  gene
+PhaMiChr01Cg000010-mRNA-1           mRNA   (braker_id=g4474.t1)
+PhaMiChr01Cg000010-mRNA-1:1         exon
+PhaMiChr01Cg000010-mRNA-1:cds       CDS
+```
 
-Chr00: 52 genes.
+### Functional (`functional_workdir/functional_outputs/`)
 
-The full release lives on MSU HPCC at `/mnt/research/Weed_lab/projects/Phalaris_minor_v3/`. Besides the GFF3, it includes proteins, CDS, inputs, the full BRAKER working directory and the trained AUGUSTUS species `PhaMi_v3_A_isoseq`. The species can be reused by copying it into `$AUGUSTUS_CONFIG_PATH/species/`.
+| Path | Content |
+|---|---|
+| `functional_annotation.tsv` | **one row per protein, in assembly order** (see the columns below) |
+| `functional_annotation.alphabetical.tsv` | same content, alphabetical order |
+| `<SP>.functional.gff` | longest-isoform GFF with NCBI product names and InterPro/GO/Pfam terms (AGAT) |
 
----
+TSV columns:
+- `ID sequence`
+- `NCBI DESCRIPTION`, `NCBI Subject;E-value;Bit`
+- `herbres Subject;E-value;Bit`, `uniref Subject;E-value;Bit`
+- `SignalP Pos;Pr`, `TargetP ...`, `MULTILOC`
+- `IPRSCAN GO`, `IPRSCAN IPR`, `Hmmer Pfam`
 
-## Runtime: BRAKER3 vs MAKER
-
-These figures come from SLURM accounting (`sacct`) for jobs that completed. Repeat masking is excluded from both, because v3 reused an existing soft-masked genome.
-
-| | Wall-clock | CPU-hours (approx.) | Jobs |
-|---|---|---|---|
-| **BRAKER3 v3** | **~11 h** | **~530** | 1 BRAKER job (48 CPU) + 10 min alignment |
-| MAKER v2 | ~5 days | ~12,000–13,000 | ~30 per-chromosome jobs (B subgenome ~2 days; C chromosomes 2.4–3.3 days each) |
-
-MAKER also needed several failed or restarted attempts, including a 7-day timeout and a 2.5-day failed canary run. BRAKER3 ran in a single job without restarts.
-
-Two caveats:
-
-- The MAKER CPU-hour figure is a rough sum; a few Snakemake jobs are identified only by UUID.
-- MAKER v2 additionally predicts UTRs and tRNAs, which BRAKER does not.
+Intermediate outputs of every step are listed in [docs/FUNCTIONAL.md](docs/FUNCTIONAL.md).
 
 ---
 
-## HPCC notes: quotas and containers
+## 10. Example results: *Phalaris minor*
 
-- **Scratch file quota (1,048,576 files).** GeneMark splits a heavily masked 4.9 Gb genome into about 178 k pieces and writes two files per piece for every GeneMark run. That is about 357 k files per run, so two parallel BRAKER runs pushed usage from 138 k to **856 k files within a few hours**. `99_quota_guard.sbatch` removes `output/data` and `output/gmhmm` from `GeneMark-ES`/`GeneMark-EP` once their `genemark.gtf` has been stable for 15 min. Contents of `GeneMark-ETP` are only counted, never deleted. As a last resort, if usage passes 980 k files, the guard cancels the protein-only control run.
-- **Full `$HOME`.** All temporary and container cache directories (`TMPDIR`, `APPTAINER_CACHEDIR`, `SINGULARITY_CACHEDIR`) point to scratch.
-- **Symlinks and containers.** Symlinks into `/mnt/research/...` (an automounted, real path `/mnt/ufs18/...`) did not resolve inside Singularity, even with bind mounts. Large inputs that containers need are therefore copied as real files.
-- **BUSCO** keeps about 10 k small files per run, so its run folders are packed into `.tar.gz` after the summary is copied out.
-- **GeneMark license.** The GeneMark inside the braker3 container only *tests* for `~/.gm_key` and runs without it.
+Files: [`results/PhaMi/`](results/PhaMi/). This includes the final GFF3, [`PhaMi.v3.gff3.gz`](results/PhaMi/structural/PhaMi.v3.gff3.gz).
 
----
+| | **v3 (this pipeline)** | MAKER v2 |
+|---|---|---|
+| Genes / mRNAs | 44,965 / 49,216 | 55,124 protein-coding (+ 2,039 tRNA) |
+| BUSCO `poales_odb10` C [S, D] | **95.9 % [18.6, 77.3]** | 96.1 % [17.6, 78.4] |
+| BUSCO F / M | 0.2 % / 3.9 % | 1.5 % / 2.5 % |
+| Single-exon transcripts | 25.3 % | – |
+| Median protein (longest isoform) | 353 aa | – |
+| AUGUSTUS accuracy | 0.75 | – |
+| Gene-prediction wall-clock | **~11 h** (1 job, 48 CPUs) | ~5 days (~30 jobs, ~12–13 k CPU-h) |
 
-## Known issues and open questions
-
-- **Fewer genes on the C subgenome than on B**, even though the C chromosomes are larger (21.1 k vs 23.8 k). The C subgenome is also more heavily masked (~92 % vs ~88 %). This may be over-masking by the uncurated EDTA library, which was not cleaned of gene fragments. Worth checking against Iso-Seq loci falling in masked regions.
-- **45 k genes may be conservative for a tetraploid.** MAKER v2 has about 10 k more protein-coding genes at the same BUSCO completeness. The functional results (hit rates per gene set) should show whether those extra genes are real.
-- **No UTRs or tRNAs** in v3.
-- The NCBI protein FASTA `GenomesDatabase.v1.fixed.prot` is missing `>` on its very first header, so one record is ignored when building the AGAT hit subset.
-- The BRAKER README now marks BRAKER as deprecated in favour of **BRAKER4**. The Iso-Seq workflow here uses the documented `braker3:isoseq` container (BRAKER 3.0.8).
+Before v3, BRAKER had been run on this genome in protein-only mode with 15 per-chromosome models. That run reached only C:67.7 % / M:30.1 %. [docs/CASE_STUDY_PhaMi.md](docs/CASE_STUDY_PhaMi.md) explains why, and which v3 design choices follow from it.
 
 ---
 
-## Requirements
+## 11. What changed from v2
 
-- SLURM cluster (developed on MSU ICER HPCC).
-- Singularity/Apptainer.
-- Containers: `teambraker/braker3:latest`, `teambraker/braker3:isoseq`, gffread, plus the IWGC functional images (AGAT, MMseqs2, InterProScan 5.77-108.0, HMMER3, SignalP/TargetP, MultiLoc2, samtools).
-- Modules: `minimap2/2.26`, `SAMtools/1.18`, `BUSCO/5.8.2`.
-- Snakemake (conda env `iwgc`) for the functional pipeline.
+**Structural (vs. MAKER v2 and vs. a naive BRAKER setup)**
+- MAKER is replaced by **BRAKER3 in ETP mode**, with Iso-Seq **reads** aligned by minimap2 `splice:hq`, as BRAKER requires for long reads.
+- **One genome-wide training run** instead of per-chromosome runs (AUGUSTUS accuracy 0.75 vs 0.21–0.42).
+- Protein DB = close relative **+ OrthoDB Viridiplantae**, with every file listed explicitly in the config.
+- A new IWGC-ID GFF3 writer (`finalize_gff3.py`) that handles BRAKER's mixed AUGUSTUS/GeneMark GTF and computes CDS phases.
+- A built-in GeneMark file-count cleanup, BAI→CSI fallback for large chromosomes, and a BUSCO guard against giant proteins.
 
-Related repositories: [IWGC_Structural](https://github.com/danifilho/IWGC_Structural) (MAKER-based v2) and [IWGC_Funcional](https://github.com/danifilho/IWGC_Funcional).
+**Functional (vs. IWGC_Funcional)**
+- **Bug fix:** the parallel MMseqs2 searches shared `/tmp` and raced on MMseqs' `latest` symlink, which **silently dropped the NCBI search**. Each database now has its own tmp directory.
+- **New rule `order_tsv`:** the TSV is written in assembly order (an alphabetical copy is kept).
+- **New rule `agat_functional_gff`:** functional GFF via AGAT, with `extract_hits.py` repairing the glued headers of the NCBI FASTA on the fly.
+- The duplicate `configfile:` line was removed.
 
 ---
 
-## Contact
+## 12. Troubleshooting
 
-Maintained by **@danifilho**. Questions and issues are welcome through the GitHub issue tracker.
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) lists every error met while running this pipeline: the message, the cause and the fix. It covers 24 entries, including container paths, file quotas, BRAKER modes, BUSCO 0 %, the MMseqs `/tmp` race, AGAT and InterProScan.
+
+---
+
+## 13. Citations
+
+If you use this pipeline, please cite the underlying tools:
+- **BRAKER3:** Gabriel L. et al. (2024) *Genome Research* 34:769–777.
+- **GeneMark-ETP:** Brůna T. et al. (2024) *Genome Research* 34:757–768.
+- **AUGUSTUS:** Stanke M. et al. (2008) *Bioinformatics* 24:637–644.
+- **TSEBRA:** Gabriel L. et al. (2021) *BMC Bioinformatics* 22:566.
+- **minimap2:** Li H. (2018) *Bioinformatics* 34:3094–3100.
+- **BUSCO:** Manni M. et al. (2021) *Mol Biol Evol* 38:4647–4654.
+- **RepeatModeler2:** Flynn J.M. et al. (2020) *PNAS* 117:9451–9457.
+- **InterProScan:** Jones P. et al. (2014) *Bioinformatics* 30:1236–1240.
+- **MMseqs2:** Steinegger M. & Söding J. (2017) *Nat Biotechnol* 35:1026–1028.
+- **AGAT:** Dainat J. *AGAT* (Zenodo).
+- **SignalP 5.0:** Almagro Armenteros J.J. et al. (2019) *Nat Biotechnol* 37:420–423.
+- **TargetP 2.0:** Almagro Armenteros J.J. et al. (2019) *Life Sci Alliance* 2:e201900429.
+- **MultiLoc2:** Blum T. et al. (2009) *BMC Bioinformatics* 10:274.
+- **HMMER:** Eddy S.R. (2011) *PLoS Comput Biol* 7:e1002195.
+- **Pfam:** Mistry J. et al. (2021) *Nucleic Acids Res* 49:D412–D419.
+
+## 14. Contact
+
+- **Email:** dasilvaf@msu.edu
+- **GitHub:** [danifilho](https://github.com/danifilho)

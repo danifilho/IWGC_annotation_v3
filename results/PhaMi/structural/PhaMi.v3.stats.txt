@@ -1,0 +1,30 @@
+genes: 44965
+mRNAs: 49216
+single-exon transcripts: 12435 / 49216 (25.3%)
+mean CDS exons per transcript: 5.29
+median protein length, all isoforms (aa): 358
+median protein length, longest isoform per gene (aa): 353
+longest protein (aa): 5071
+proteins with internal stop: 1
+proteins not starting with M: 3
+CDS length not multiple of 3: 6
+genes per sequence:
+  Chr01C	3993
+  Chr02C	3428
+  Chr03C	3213
+  Chr04C	2959
+  Chr05C	2686
+  Chr06C	2383
+  Chr07C	2475
+  Chr01B	4421
+  Chr02B	3960
+  Chr03B	3614
+  Chr04B	3416
+  Chr05B	2929
+  Chr06B	2636
+  Chr07B	2800
+  Chr00	52
+BRAKER:
+  Both protein and RNA-Seq data in input detected. BRAKER will be executed in ETP mode (BRAKER3).
+  The accuracy after initial training (no optimize_augustus.pl, no CRF) is 0.7324
+  The accuracy after training (after optimize_augustus.pl, no CRF) is 0.753866666666667

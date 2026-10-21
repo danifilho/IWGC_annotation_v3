@@ -12,7 +12,7 @@ The stop codon is folded into the CDS when a source left it out (GeneMark
 excludes it, AUGUSTUS includes it), so every CDS ends with its stop codon.
 Isoforms are numbered by start coordinate, then by original transcript ID.
 
-Usage: finalize_v3.py braker.gtf genome.fa.fai ORG > final.gff3
+Usage: finalize_gff3.py braker.gtf genome.fa.fai ORG > final.gff3
 """
 import re, sys
 from collections import defaultdict

@@ -1,0 +1,33 @@
+#!/bin/bash --login
+#SBATCH --job-name=functional
+#SBATCH --partition=general-long
+#SBATCH --time=7-00:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=64
+#SBATCH --mem=250G
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
+# IWGC functional annotation on one node. Submit from the working directory
+# (volume_name). Snakemake runs the independent branches (3x MMseqs2,
+# InterProScan, HMMER, SignalP/TargetP, then MultiLoc2) in parallel.
+set -euo pipefail
+WD="$SLURM_SUBMIT_DIR"
+cd "$WD"
+
+# conda env with snakemake (see README); singularity on PATH on every node
+source ~/miniforge3/etc/profile.d/conda.sh
+conda activate iwgc
+export PATH="$HOME/miniforge3/bin:$PATH"
+# keep temp + container caches off $HOME
+export TMPDIR=$WD/tmp APPTAINER_CACHEDIR=$WD/tmp SINGULARITY_CACHEDIR=$WD/tmp
+mkdir -p "$TMPDIR"
+
+echo "Host: $(hostname)  Start: $(date)  snakemake: $(snakemake --version)"
+snakemake --unlock || true
+# --rerun-triggers mtime: do not redo finished steps just because the Snakefile changed
+snakemake --cores "$SLURM_CPUS_PER_TASK" --use-singularity \
+    --singularity-args "-B ${WD}" \
+    --rerun-triggers mtime \
+    --keep-going --rerun-incomplete --printshellcmds
+echo "End: $(date)"

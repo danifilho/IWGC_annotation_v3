@@ -1,8 +1,6 @@
 configfile: "config.yaml"
 import os
 
-configfile: "config.yaml"
-
 species_name = config['species_name']
 volume_name = config['volume_name']
 
@@ -58,7 +56,9 @@ def gather_inputs(species_name):
 
 rule all:
     input:
-        f"functional_outputs/functional_annotation.tsv"
+        f"functional_outputs/functional_annotation.tsv",
+        f"functional_outputs/functional_annotation.alphabetical.tsv",
+        f"functional_outputs/{species_name}.functional.gff"
 
 rule agat:
     input:
@@ -250,7 +250,7 @@ rule generate_tsv:
         multiloc=f"multiloc_outputs/{species_name}_ml2.txt",
         ncbi_database=ncbi_data_file
     output:
-        output_file=f"functional_outputs/functional_annotation.tsv"
+        output_file=f"functional_outputs/functional_annotation.alphabetical.tsv"
     params:
         volume_name=volume_name,
         outputs_list=f"functional_outputs/{species_name}_outputs_list"
@@ -268,7 +268,53 @@ rule generate_tsv:
             f.write(f"{params.volume_name}/{input.ncbi_database}\n")
         shell(f"""
             python {params.volume_name}/scripts/functional_merge.py --filelist {params.volume_name}/{params.outputs_list} --output_dir {params.volume_name}/functional_outputs --species_name {species_name}
+            mv {params.volume_name}/functional_outputs/functional_annotation.tsv {params.volume_name}/{output.output_file}
             """)
         # Optionally, remove the outputs_list file after use
 #        os.remove(params.outputs_list)
 
+
+
+# functional_merge.py writes the TSV in alphabetical ID order; reorder it to
+# assembly order (the order of gff_read_output/*.aa, which follows the GFF).
+rule order_tsv:
+    input:
+        tsv="functional_outputs/functional_annotation.alphabetical.tsv",
+        aa=f"gff_read_output/{species_name}.aa"
+    output:
+        "functional_outputs/functional_annotation.tsv"
+    shell:
+        r"""
+        awk -F'\t' 'NR==FNR {{ if (/^>/) {{ split(substr($0,2), h, /[ \t]/); ord[h[1]] = ++n }}; next }}
+                    FNR==1 {{ print "0\t" $0; next }}
+                    {{ print (($1 in ord) ? ord[$1] : 999999999) "\t" $0 }}' {input.aa} {input.tsv} \
+          | sort -t $'\t' -k1,1n | cut -f2- > {output}
+        """
+
+# Functional GFF: AGAT adds NCBI product names (best hits) and InterProScan
+# GO/IPR/Pfam... terms to the longest-isoform GFF.
+rule agat_functional_gff:
+    input:
+        gff=f"agat_outputs/{species_name}.gff",
+        ncbi_hits=f"mmseqs_output/{species_name}_ncbi_best_hit.out",
+        ncbi_fasta=ncbi_data_file,
+        iprs=f"iprscan_output/{species_name}.iprscan.tsv"
+    output:
+        gff=f"functional_outputs/{species_name}.functional.gff",
+        hits=f"functional_outputs/{species_name}.ncbi_hits.fasta"
+    params:
+        volume_name=volume_name,
+        outdir=f"functional_outputs/agat_{species_name}"
+    shell:
+        """
+        python3 {params.volume_name}/scripts/extract_hits.py {input.ncbi_hits} {input.ncbi_fasta} > {output.hits}
+        # AGAT does not accept the 15th (pathways) column of the InterProScan TSV
+        cut -f1-14 {input.iprs} > iprscan_output/{species_name}.iprscan.nopathways.tsv
+        rm -rf {params.outdir}
+        singularity exec -B {params.volume_name}:{params.volume_name} {params.volume_name}/images/agat.sif \
+          agat_sp_manage_functional_annotation.pl -f {params.volume_name}/{input.gff} \
+            -b {params.volume_name}/{input.ncbi_hits} --db {params.volume_name}/{output.hits} \
+            -i {params.volume_name}/iprscan_output/{species_name}.iprscan.nopathways.tsv \
+            -o {params.volume_name}/{params.outdir} > functional_outputs/agat_{species_name}.log 2>&1
+        cp {params.outdir}/*.gff {output.gff}
+        """

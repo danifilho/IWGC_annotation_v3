@@ -1,24 +1,34 @@
-#Diretório de trabalho da anotação funcional
-volume_name: /mnt/gs21/scratch/dasilvaf/iwgc_pipeline_v3/functional
+############################################################################
+# IWGC functional annotation — configuration
+# Paths are RELATIVE to volume_name (the working directory), which is
+# bind-mounted into the containers. Inputs/databases must live inside it
+# (real files or hard links, not symlinks pointing outside it).
+############################################################################
 
-#Genoma (em inputs/), usado pelo gffread para extrair proteínas do GFF
-fasta_file: phalaris_swapped.fasta
+# Absolute path of the functional working directory
+volume_name: /mnt/gs21/scratch/USER/IWGC_annotation_v3/functional
 
-#Bases MMseqs. A primeira (ncbi) é obrigatória e fornece a NCBI DESCRIPTION.
+# Genome FASTA in inputs/ (used by gffread to extract proteins from the GFF)
+fasta_file: genome.fasta
+
+# Structural annotation GFF3 in inputs/ (e.g. PhaMi.v3.gff3 from the structural pipeline)
+final_filtering_gff: PhaMi.v3.gff3
+
+# Species code -> output names
+species_name: PhaMi
+
+# MMseqs2 databases. The entry named 'ncbi' is REQUIRED: it provides the
+# "NCBI DESCRIPTION" column and the product names of the functional GFF.
+#   path:     FASTA or MMseqs DB searched with easy-search
+#   ncbidata: protein FASTA with full headers (descriptions)
 mmseqs_databases:
   - name: 'ncbi'
     path: 'databases/current/GenomesDatabase.v1.prot'
-    ncbidata: 'databases/current/GenomesDatabase.v1.prot'  # FASTA p/ descrições
+    ncbidata: 'databases/current/GenomesDatabase.v1.prot'
   - name: 'herbres'
     path: 'databases/herb_res_prots/total_KO_labeled.fasta'
   - name: 'uniref'
     path: 'databases/mmseqs_db/uniref50'
 
-#GFF da anotação estrutural (Rota A) — colocado em inputs/
-final_filtering_gff: PhaMi.v3.gff3
-
-#Script do multiloc (não mudar)
+# MultiLoc2 wrapper script in scripts/ (do not change)
 multiloc_script: ml2_one_by_one.sh
-
-#Nome da espécie -> determina o nome dos outputs
-species_name: PhaMi

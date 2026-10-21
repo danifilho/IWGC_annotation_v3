@@ -1,0 +1,53 @@
+############################################################################
+# IWGC structural annotation v3 (BRAKER3 + Iso-Seq) — configuration
+# All paths below are RELATIVE to volume_name unless they start with "/".
+# Every input must be a real file inside volume_name (not a symlink that
+# points outside it): containers only see the bound volume.
+############################################################################
+
+# Absolute path of the working directory (contains Snakefile, config.yaml,
+# inputs/, images/, scripts/). It is bind-mounted into every container.
+volume_name: /mnt/gs21/scratch/USER/IWGC_annotation_v3/structural
+
+# Species code: prefix of every gene ID (PhaMiChr01Cg000010) and of output files
+species_abbreviation: PhaMi
+
+# ---------------------------------------------------------------- genome
+# Unmasked genome FASTA in inputs/. Simple headers only (no spaces).
+fasta_file: genome.fasta
+
+# Optional: an already soft-masked genome in inputs/. When set, RepeatModeler,
+# RepeatMasker and bedtools are skipped and this file is used directly.
+# Leave empty ("") to run the masking steps.
+softmasked_genome: ""
+
+# ---------------------------------------------------------------- evidence
+# Protein FASTA files in inputs/, concatenated into one BRAKER protein DB.
+# Use a close relative AND a broad set (e.g. OrthoDB Viridiplantae, ~5.3M seqs);
+# BRAKER's ProtHint needs the broad set.
+protein_files:
+  - Lolium_rigidum_protein.fa
+  - Viridiplantae.fa
+
+# Iso-Seq / PacBio long reads in inputs/: FLNC or HiFi READS (not collapsed
+# transcripts). Accepted: .bam (e.g. isoseq refine *.flnc.bam), .fasta/.fa,
+# .fastq/.fq (optionally .gz). Leave empty ("") for protein-only BRAKER (EP mode).
+isoseq_reads: sample.flnc.bam
+
+# ---------------------------------------------------------------- resources
+repeatmodeler_threads: 64
+repeatmasker_threads: 64
+minimap2_threads: 32
+minimap2_index_batch: 16G      # -I: must exceed genome size so it is indexed in one batch
+braker_threads: 48             # BRAKER warns GeneMark may die above 48
+busco_threads: 16
+
+# ---------------------------------------------------------------- BRAKER
+# AUGUSTUS species name for the trained model (must not exist yet)
+braker_species: PhaMi_v3
+
+# ---------------------------------------------------------------- QC
+# Local BUSCO lineage directory (compute nodes usually have no internet)
+busco_lineage: busco_downloads/lineages/poales_odb10
+# Proteins longer than this are excluded from BUSCO (hmmsearch aborts > 100k aa)
+busco_max_protein_length: 10000

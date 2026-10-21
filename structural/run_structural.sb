@@ -1,0 +1,29 @@
+#!/bin/bash --login
+#SBATCH --job-name=structural
+#SBATCH --partition=general-long
+#SBATCH --time=7-00:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=64
+#SBATCH --mem=400G
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
+# IWGC structural annotation v3 on one node. Submit from the working directory
+# (volume_name). BRAKER itself uses braker_threads (<= 48) of these cores.
+set -euo pipefail
+WD="$SLURM_SUBMIT_DIR"
+cd "$WD"
+
+source ~/miniforge3/etc/profile.d/conda.sh
+conda activate iwgc
+export PATH="$HOME/miniforge3/bin:$PATH"
+export TMPDIR=$WD/tmp APPTAINER_CACHEDIR=$WD/tmp SINGULARITY_CACHEDIR=$WD/tmp
+mkdir -p "$TMPDIR"
+
+echo "Host: $(hostname)  Start: $(date)  snakemake: $(snakemake --version)"
+snakemake --unlock || true
+snakemake --cores "$SLURM_CPUS_PER_TASK" --use-singularity \
+    --singularity-args "-B ${WD}" \
+    --rerun-triggers mtime \
+    --keep-going --rerun-incomplete --printshellcmds
+echo "End: $(date)"

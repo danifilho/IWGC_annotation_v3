@@ -1,0 +1,95 @@
+# Functional pipeline: step by step
+
+Snakefile: [`functional/Snakefile`](../functional/Snakefile) · config: [`functional/config.yaml`](../functional/config.yaml)
+
+```
+<SP>.v3.gff3 ─► agat (longest isoform) ─► gff_read (-J: complete models only) ─► <SP>.aa
+   <SP>.aa ─┬─► mmseqs2 × {ncbi, herbres, uniref} ─► best_hits (e < 1e-5) ──────────────┐
+            ├─► interproscan (2,000-protein chunks) ─► prot_list ─► multiloc ───────────┤
+            ├─► hmmer (Pfam) ───────────────────────────────────────────────────────────┤
+            └─► sigtarp (SignalP 5 + TargetP 2) ────────────────────────────────────────┤
+                                                                                         ▼
+                         generate_tsv (functional_merge.py) ─► order_tsv ─► functional_annotation.tsv
+   agat GFF + ncbi best hits + InterProScan ─► agat_functional_gff ─► <SP>.functional.gff
+```
+
+Each section gives what the step does, the tool, its outputs, and the result on ***Phalaris minor* v3** (input: 44,965 genes / 49,216 mRNAs). Steps marked † are still running on *P. minor*; their numbers are added when the run finishes.
+
+---
+
+## 1. `agat`: longest isoform per gene
+
+`agat_sp_keep_longest_isoform.pl` (AGAT 1.4.0) → `agat_outputs/<SP>.gff`
+
+***P. minor*:** 44,965 genes → 44,965 mRNAs (one per gene).
+
+## 2. `gff_read`: protein and CDS extraction
+
+`gffread -J -S -y / -x` (gffread 0.12.7) → `gff_read_output/<SP>.aa`, `<SP>.cds`.
+`-J` drops models without a start or stop codon, or with an internal stop.
+
+***P. minor*:** **44,960 proteins**; 5 incomplete models were dropped. For comparison, MAKER v2 lost about 7,600 partial models at this step.
+
+## 3. `mmseqs2` + `best_hits`: homology
+
+For each database: `mmseqs easy-search ... --start-sens 2 -s 7 --sens-steps 3` (iterative sensitivity), with **a private tmp directory per database**. That tmp directory is the v3 fix for the `/tmp` race; see [TROUBLESHOOTING #18](TROUBLESHOOTING.md#18-could-not-create-symlink-of-tmp-in-rule-mmseqs2). `best_hits` keeps the best-scoring hit per protein with e-value < 1e-5.
+
+Outputs: `mmseqs_output/<SP>_<db>.ofmt6` (all hits) and `<SP>_<db>_best_hit.out`.
+
+| Database | *P. minor* proteins with a best hit | Runtime |
+|---|---|---|
+| UniRef50 | **43,580 / 44,960 (96.9 %)** | ~25 min |
+| herbicide-resistance KO set | **429** | ~1 min |
+| NCBI GenomesDatabase v1 | † | ~52 min (20 threads) |
+
+## 4. `interproscan`: domains, GO, pathways
+
+InterProScan 5.77-108.0 with `--goterms --pathways --iprlookup`, run in **chunks of 2,000 proteins** (avoids the LevelDB out-of-memory crash; chunks that are already done are skipped, so the step can resume) → `iprscan_output/<SP>.iprscan.tsv`.
+
+***P. minor*:** 23 chunks at about 1.5 h each (30 CPUs), so **~34 h**. This is the bottleneck of the functional module. †
+
+## 5. `prot_list` + `multiloc`: subcellular localization
+
+`prot_list` collects the InterProScan GO terms per protein. MultiLoc2 (plant model, using those GO terms) then runs in about 20 parallel splits → `multiloc_outputs/<SP>_ml2.txt`. †
+
+## 6. `hmmer`: Pfam domains
+
+`hmmscan --domtblout` against Pfam-A (HMMER 3.3) → `hmmer_outputs/<SP>.domtblout`.
+
+***P. minor*:** 41,650 proteins with at least one Pfam hit before thresholds are applied (the merge step keeps the significant ones). Runtime about 7.5 h on 4 CPUs.
+
+## 7. `sigtarp`: signal peptides and targeting
+
+SignalP 5.0b (`-org euk`) and TargetP 2.0 (`-org pl`) → `sigtarp_outputs/<SP>.gff3`, `<SP>_summary.targetp2`.
+
+***P. minor*:**
+- SignalP: **4,986** signal peptides.
+- TargetP: 34,336 noTP, 5,621 SP (secretory), 3,372 cTP (chloroplast), 1,522 mTP (mitochondrion), 109 luTP (thylakoid lumen).
+
+## 8. `generate_tsv` → `order_tsv`: merged table
+
+`functional_merge.py` merges every result into one row per protein. It writes `functional_annotation.alphabetical.tsv`; `order_tsv` then reorders it into **assembly order** (the order of `<SP>.aa`, which follows the GFF), giving `functional_annotation.tsv`.
+
+Columns: `ID sequence`, `NCBI DESCRIPTION`, `NCBI Subject;E-value;Bit`, `herbres ...`, `uniref ...`, `SignalP Pos;Pr`, `TargetP ...`, `MULTILOC`, `IPRSCAN GO`, `IPRSCAN IPR`, `Hmmer Pfam`.
+
+***P. minor* coverage:** †
+
+## 9. `agat_functional_gff`: functional GFF
+
+1. `extract_hits.py` writes the NCBI subjects of the best hits, repairing the glued headers of the NCBI FASTA on the fly.
+2. `agat_sp_manage_functional_annotation.pl` adds product names (from the NCBI hits) and InterPro / GO / Pfam / PANTHER / … terms (from InterProScan without the pathways column) to the longest-isoform GFF → `functional_outputs/<SP>.functional.gff`.
+
+The per-database term lists are written to `functional_outputs/agat_<SP>/` (`GO.txt`, `Pfam.txt`, `InterPro.txt`, …), together with AGAT's `report.txt`. †
+
+---
+
+## Runtime (*P. minor*, 44,960 proteins, 1 node, 64 CPUs, 250 GB)
+
+| Step | Wall-clock |
+|---|---|
+| agat + gffread | ~3 min |
+| MMseqs2 (3 databases in parallel) | ~1 h (NCBI is the slowest) |
+| HMMER | ~7.5 h (in parallel with InterProScan) |
+| SignalP + TargetP | ~1.7 h (starts after HMMER; in parallel with InterProScan) |
+| InterProScan | ~34 h (bottleneck) |
+| MultiLoc2, merge, AGAT | † |
