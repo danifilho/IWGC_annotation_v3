@@ -1,0 +1,19 @@
+# BUSCO version is: 5.8.2 
+# The lineage dataset is: poales_odb10 (Creation date: 2024-01-08, number of genomes: 12, number of BUSCOs: 4896)
+# Summarized benchmarking in BUSCO notation for file /mnt/scratch/lemasjoh/IWGC_annotation_pipeline/final/PhaMi.proteins.faa
+# BUSCO was run in mode: proteins
+
+	***** Results: *****
+
+	C:67.7%[S:23.0%,D:44.7%],F:2.3%,M:30.1%,n:4896	   
+	3313	Complete BUSCOs (C)			   
+	1126	Complete and single-copy BUSCOs (S)	   
+	2187	Complete and duplicated BUSCOs (D)	   
+	111	Fragmented BUSCOs (F)			   
+	1472	Missing BUSCOs (M)			   
+	4896	Total BUSCO groups searched		   
+
+Dependencies and versions:
+	hmmsearch: 3.4
+	python: sys.version_info(major=3, minor=11, micro=3, releaselevel='final', serial=0)
+	busco: 5.8.2

@@ -1,0 +1,24 @@
+#Diretório de trabalho da anotação funcional
+volume_name: /mnt/gs21/scratch/dasilvaf/iwgc_pipeline_v3/functional
+
+#Genoma (em inputs/), usado pelo gffread para extrair proteínas do GFF
+fasta_file: phalaris_swapped.fasta
+
+#Bases MMseqs. A primeira (ncbi) é obrigatória e fornece a NCBI DESCRIPTION.
+mmseqs_databases:
+  - name: 'ncbi'
+    path: 'databases/current/GenomesDatabase.v1.prot'
+    ncbidata: 'databases/current/GenomesDatabase.v1.prot'  # FASTA p/ descrições
+  - name: 'herbres'
+    path: 'databases/herb_res_prots/total_KO_labeled.fasta'
+  - name: 'uniref'
+    path: 'databases/mmseqs_db/uniref50'
+
+#GFF da anotação estrutural (Rota A) — colocado em inputs/
+final_filtering_gff: PhaMi.v3.gff3
+
+#Script do multiloc (não mudar)
+multiloc_script: ml2_one_by_one.sh
+
+#Nome da espécie -> determina o nome dos outputs
+species_name: PhaMi

@@ -1,0 +1,60 @@
+#!/bin/bash --login
+#SBATCH --job-name=PhaMi_v3_func
+#SBATCH --partition=general-long
+#SBATCH --time=7-00:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=64
+#SBATCH --mem=250G
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
+
+# Functional annotation of PhaMi v3 with the SAME IWGC functional pipeline as v2
+# (Snakefile copied unchanged from IWGC_annotation/functional), plus the same
+# AGAT step used for v2 (agat_run_final.sb) to write the functional GFF.
+# Databases/genome are hardlinks to the v2 workdir (no extra space or files).
+set -euo pipefail
+
+WD=/mnt/gs21/scratch/dasilvaf/iwgc_pipeline_v3/functional
+SP=PhaMi
+cd "$WD"
+
+source ~/miniforge3/etc/profile.d/conda.sh
+conda activate iwgc
+export PATH="$HOME/miniforge3/bin:$PATH"
+export TMPDIR=$WD/tmp APPTAINER_CACHEDIR=$WD/tmp SINGULARITY_CACHEDIR=$WD/tmp
+mkdir -p "$TMPDIR"
+
+echo "Host: $(hostname)  Start: $(date)  snakemake: $(snakemake --version)"
+snakemake --unlock || true
+snakemake --cores 64 --use-singularity \
+    --singularity-args "-B ${WD}" \
+    --rerun-triggers mtime \
+    --keep-going --rerun-incomplete --printshellcmds
+echo "Snakemake done: $(date)"
+
+# --- TSV in assembly order (gffread output follows the GFF order) ---
+TSV=functional_outputs/functional_annotation.tsv
+cp "$TSV" functional_outputs/functional_annotation.alphabetical.tsv
+awk -F'\t' 'NR==FNR { if (/^>/) { split(substr($0,2), h, /[ \t]/); ord[h[1]] = ++n }; next }
+            FNR==1 { print "0\t" $0; next }
+            { print ((($1 in ord) ? ord[$1] : 999999999)) "\t" $0 }' \
+    gff_read_output/$SP.aa functional_outputs/functional_annotation.alphabetical.tsv \
+  | sort -t $'\t' -k1,1n | cut -f2- > "$TSV.tmp" && mv "$TSV.tmp" "$TSV"
+
+# --- functional GFF with AGAT (same as v2's agat_run_final.sb) ---
+HITS=databases/current/GenomesDatabase.v1.v3hits.prot
+awk -F'\t' 'NR==FNR { want[$2]; next }
+            /^>/ { split(substr($0,2), h, /[ \t]/); keep = (h[1] in want) }
+            keep' mmseqs_output/${SP}_ncbi_best_hit.out databases/current/GenomesDatabase.v1.fixed.prot > "$HITS"
+echo "NCBI hit sequences for AGAT: $(grep -c '^>' "$HITS")"
+IPR=iprscan_output/$SP.iprscan.nopathways.tsv
+cut -f1-14 iprscan_output/$SP.iprscan.tsv > "$IPR"
+OUT=functional_outputs/agat_$SP; rm -rf "$OUT"
+singularity exec -B "$WD:$WD" images/agat.sif agat_sp_manage_functional_annotation.pl \
+  -f agat_outputs/$SP.gff -b mmseqs_output/${SP}_ncbi_best_hit.out --db "$HITS" -i "$IPR" -o "$OUT" \
+  > functional_outputs/agat_$SP.log 2>&1
+cp "$OUT"/*.gff functional_outputs/$SP.v3.functional.gff
+rm -rf "$TMPDIR"
+echo "End: $(date)"
+ls -la functional_outputs

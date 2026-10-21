@@ -1,0 +1,19 @@
+# BUSCO version is: 5.8.2 
+# The lineage dataset is: poales_odb10 (Creation date: 2024-01-08, number of genomes: 12, number of BUSCOs: 4896)
+# Summarized benchmarking in BUSCO notation for file /mnt/gs21/scratch/dasilvaf/iwgc_pipeline_v3/final/B_protein/braker.longest.aa
+# BUSCO was run in mode: proteins
+
+	***** Results: *****
+
+	C:71.5%[S:16.8%,D:54.7%],F:5.4%,M:23.1%,n:4896	   
+	3503	Complete BUSCOs (C)			   
+	824	Complete and single-copy BUSCOs (S)	   
+	2679	Complete and duplicated BUSCOs (D)	   
+	263	Fragmented BUSCOs (F)			   
+	1130	Missing BUSCOs (M)			   
+	4896	Total BUSCO groups searched		   
+
+Dependencies and versions:
+	hmmsearch: 3.4
+	python: sys.version_info(major=3, minor=11, micro=3, releaselevel='final', serial=0)
+	busco: 5.8.2

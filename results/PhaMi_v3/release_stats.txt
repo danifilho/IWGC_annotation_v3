@@ -1,0 +1,9 @@
+PhaMi v3 (BRAKER3 ETP: Iso-Seq FLNC + Lolium/OrthoDB proteins, one genome-wide model)
+genes: 44965
+mRNAs: 49216
+proteins: 49216  CDS: 49216
+longest-isoform proteins: 44965
+proteins with internal stop: 1
+proteins not starting with M: 3
+CDS length not multiple of 3: 6
+first gene: ID=PhaMiChr01Cg000010;Name=PhaMiChr01Cg000010

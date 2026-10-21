@@ -1,0 +1,15 @@
+attempt: B_protein
+genes: 96759
+transcripts: 102236
+proteins > 10k aa (dropped for BUSCO): 391
+single-exon transcripts: 39067 / 102236 (38.2%)
+mean CDS exons per transcript: 3.17
+longest-isoform protein length median: 219
+# Mon Oct 19 22:57:21 2026: /mnt/scratch/dasilvaf/iwgc_pipeline_v3/work/braker_B_protein/train.gb.test will be used for measuring AUGUSTUS accuracy after training
+# Mon Oct 19 22:57:21 2026: /mnt/scratch/dasilvaf/iwgc_pipeline_v3/work/braker_B_protein/train.gb.train.test will be used or measuring AUGUSTUS accuracy during training with optimize_augustus.pl
+# Mon Oct 19 22:57:27 2026: First AUGUSTUS accuracy test
+# Mon Oct 19 22:58:00 2026: Computing accuracy of AUGUSTUS prediction (in test file derived from predictions on training data set stored in /mnt/scratch/dasilvaf/iwgc_pipeline_v3/work/braker_B_protein/firsttest.stdout)
+# Mon Oct 19 22:58:00 2026: The accuracy after initial training (no optimize_augustus.pl, no CRF) is 0.7478
+# Mon Oct 19 23:30:43 2026: Second AUGUSTUS accuracy test
+# Mon Oct 19 23:31:15 2026: Computing accuracy of AUGUSTUS prediction (in test file derived from predictions on training data set stored in /mnt/scratch/dasilvaf/iwgc_pipeline_v3/work/braker_B_protein/secondtest.stdout)
+# Mon Oct 19 23:31:15 2026: The accuracy after training (after optimize_augustus.pl, no CRF) is 0.763733333333333
