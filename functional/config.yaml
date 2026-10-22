@@ -23,12 +23,21 @@ species_name: PhaMi
 #   ncbidata: protein FASTA with full headers (descriptions)
 mmseqs_databases:
   - name: 'ncbi'
-    path: 'databases/current/GenomesDatabase.v1.prot'
-    ncbidata: 'databases/current/GenomesDatabase.v1.prot'
+    # Use the REPAIRED FASTA (scripts/fix_fasta_headers.py): the original
+    # GenomesDatabase.v1.prot has glued headers that merge 49,542 proteins into
+    # one 18.9 M aa record (AA049522-RA). See docs/TROUBLESHOOTING.md #28.
+    path: 'databases/current/GenomesDatabase.v1.fixed.prot'
+    ncbidata: 'databases/current/GenomesDatabase.v1.fixed.prot'
   - name: 'herbres'
     path: 'databases/herb_res_prots/total_KO_labeled.fasta'
   - name: 'uniref'
     path: 'databases/mmseqs_db/uniref50'
+
+# NCBI best hit: report the best hit that HAS a description in the FASTA
+# header; fall back to the overall best hit only when no named hit exists.
+# GenomesDatabase.v1 contains 49,542 unnamed "AA...-RA" proteins (oat, added
+# from CoGe) that would otherwise be the best hit of ~60 % of grass genes.
+ncbi_prefer_named_hits: true
 
 # MultiLoc2 wrapper script in scripts/ (do not change)
 multiloc_script: ml2_one_by_one.sh

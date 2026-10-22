@@ -32,15 +32,26 @@ Each section gives what the step does, the tool, its outputs, and the result on 
 
 ## 3. `mmseqs2` + `best_hits`: homology
 
-For each database: `mmseqs easy-search ... --start-sens 2 -s 7 --sens-steps 3` (iterative sensitivity), with **a private tmp directory per database**. That tmp directory is the v3 fix for the `/tmp` race; see [TROUBLESHOOTING #18](TROUBLESHOOTING.md#18-could-not-create-symlink-of-tmp-in-rule-mmseqs2). `best_hits` keeps the best-scoring hit per protein with e-value < 1e-5.
+For each database: `mmseqs easy-search ... --start-sens 2 -s 7 --sens-steps 3` (iterative sensitivity), with **a private tmp directory per database**. That tmp directory is the v3 fix for the `/tmp` race; see [TROUBLESHOOTING #18](TROUBLESHOOTING.md#18-could-not-create-symlink-of-tmp-in-rule-mmseqs2). Before searching a FASTA target, the rule checks that it starts with `>` and has no glued headers ([#28](TROUBLESHOOTING.md#28-most-ncbi-best-hits-are-the-same-id-aa049522-ra)).
 
-Outputs: `mmseqs_output/<SP>_<db>.ofmt6` (all hits) and `<SP>_<db>_best_hit.out`.
+`best_hits` keeps one hit per protein with e-value < 1e-5:
+- **herbres and UniRef50:** the highest-bitscore hit.
+- **NCBI**, with `ncbi_prefer_named_hits: true` (the default): the highest-bitscore hit **whose FASTA header has a description**. The unnamed best hit is used only when no named hit passes the cut.
 
-| Database | *P. minor* proteins with a best hit | Runtime |
+Why the NCBI rule? `GenomesDatabase.v1` contains 49,542 proteins with bare `AA…-RA` headers and no name or species. They are an oat proteome added from CoGe for IWGC v1; `SalTr_v01.0.gff` labels them `[Avena sativa]`. Oat is the closest relative of grass weeds in the database, so these unnamed proteins are the plain best hit of most grass genes: 27,214 of 44,960 *P. minor* v3 proteins. That leaves only 36 % of proteins with a product name. `ncbi_unnamed_subjects` lists the unnamed subjects directly from the FASTA headers.
+
+Outputs: `mmseqs_output/<SP>_<db>.ofmt6` (all hits), `<SP>_<db>_best_hit.out`, `ncbi_unnamed_subjects.txt`.
+
+| Database | *P. minor* v3 proteins with a best hit | Runtime |
 |---|---|---|
 | UniRef50 | **43,580 / 44,960 (96.9 %)** | ~25 min |
 | herbicide-resistance KO set | **429** | ~1 min |
-| NCBI GenomesDatabase v1 | **43,528 (96.8 %)** (11,470 distinct subjects) | ~52 min (20 threads) |
+| NCBI GenomesDatabase v1 (repaired, named hits) | **43,566 (96.9 %)**, with a product name for **43,293 (96.3 %)**; only 273 keep an unnamed `AA` hit | < 10 min (20 threads; ~52 min against the unrepaired DB, probably slowed by aligning against its 18.9 M aa record) |
+
+Effect of the NCBI rule on *P. minor* v3:
+- 26,941 proteins moved from an unnamed oat hit to a named RefSeq hit.
+- Identity to the hit dropped by 5.5 points on average, and the bitscore kept 92 % of its value.
+- The named hits are mostly *Triticum dicoccoides* (20,077), *Aegilops tauschii* (11,339) and *Brachypodium distachyon* (8,664).
 
 ## 4. `interproscan`: domains, GO, pathways
 
@@ -78,8 +89,8 @@ Columns: `ID sequence`, `NCBI DESCRIPTION`, `NCBI Subject;E-value;Bit`, `herbres
 
 | Column | v3 (44,960 proteins) | MAKER v2 (47,494 proteins) |
 |---|---|---|
-| NCBI hit | 43,528 (96.8 %) | 46,202 (97.3 %) |
-| NCBI description (not "Description not found") | 17,298 (38.5 %) | 17,995 (37.9 %) |
+| NCBI hit | 43,566 (96.9 %) | 46,238 (97.4 %) |
+| NCBI description (not "Description not found") | 43,293 (96.3 %) | 45,938 (96.7 %) |
 | herbicide-resistance hit | 429 | 291 |
 | UniRef50 hit | 43,580 (96.9 %) | 46,401 (97.7 %) |
 | SignalP signal peptide | 4,986 (11.1 %) | 4,419 (9.3 %) |
@@ -89,7 +100,7 @@ Columns: `ID sequence`, `NCBI DESCRIPTION`, `NCBI Subject;E-value;Bit`, `herbres
 
 Notes on these columns:
 - The `Hmmer Pfam` column is filled for every protein in both versions: `functional_merge.py` records the hmmscan hits without an e-value cut, so use the InterPro column for strict domain calls.
-- Many NCBI subjects are gene-model IDs from the GenomesDatabase without a text description, which is why only about 38 % of proteins have a description.
+- Before the database repair and the named-hit rule (§3), only about 38 % of proteins had a description, because most best hits were the unnamed `AA` record.
 
 ## 9. `functional_gff`: IWGC-format functional GFF3
 
@@ -118,12 +129,12 @@ Without a map, the script falls back to the `LOC<number>` in the description whe
 | | v3 (BRAKER3) | v2 (MAKER) |
 |---|---|---|
 | Genes | 44,965 | 57,163 (incl. 2,039 tRNA) |
-| With NCBI hit (`Dbxref`) | 43,528 (96.8 %) | 46,202 (80.8 %; tRNA and partial models have none) |
-| `Note=Unknown Protein` | 1,437 | 10,961 |
+| With NCBI hit (`Dbxref`) | 43,566 (96.9 %) | 46,238 (80.9 %; tRNA and partial models have none) |
+| `Note=Unknown Protein` | 1,399 | 10,925 |
 | With GO (`Ontology_term`) | 31,545 | 33,046 |
-| `Note` with an InterProScan match | 42,682 | 45,595 |
-| `Dbxref` with GeneID (gene2refseq, 2026-10-22) | 16,751 | 17,415 |
-| `Dbxref` GeneID = `NA`: IWGC models / retired XP versions | 26,230 / 547 | – |
+| `Note` with an InterProScan match | 42,707 | 45,608 |
+| `Dbxref` with GeneID (gene2refseq, 2026-10-22) | 42,164 | 44,662 |
+| `Dbxref` GeneID = `NA` (unnamed `AA` hits + retired accession versions) | 1,402 | 1,576 |
 
 > This step replaces `agat_sp_manage_functional_annotation.pl`. AGAT expects UniProt-style FASTA headers and could not read the NCBI descriptions, so every gene came out as `product=hypothetical protein`, in v2 and v3 alike. See [TROUBLESHOOTING #27](TROUBLESHOOTING.md#27-agat-functional-gff-every-gene-is-hypothetical-protein).
 

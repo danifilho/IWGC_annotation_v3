@@ -103,22 +103,64 @@ rule mmseqs2:
     shell:
         """
         echo "Running mmseqs2 with input: {input.aa} and database: {input.database}"
+        # A FASTA target must not contain '>' inside a line (a header glued to
+        # the previous sequence): MMseqs would silently merge those records.
+        # GenomesDatabase.v1.prot had this defect -> run scripts/fix_fasta_headers.py
+        DB={params.volume_name}/{input.database}
+        if LC_ALL=C grep -Iq . <(head -c 1000000 $DB); then   # text = FASTA target (MMseqs DBs are binary); no pipe: pipefail + SIGPIPE
+          if [ "$(head -c1 $DB)" != ">" ]; then
+            echo "ERROR: $DB does not start with a FASTA header ('>'); repair it with scripts/fix_fasta_headers.py" >&2
+            exit 1
+          fi
+          if grep -m1 -n '^[^>].*>' $DB; then
+            echo "ERROR: glued FASTA header(s) in $DB; repair it with scripts/fix_fasta_headers.py" >&2
+            exit 1
+          fi
+        fi
         rm -rf {params.volume_name}/{params.tmpdir} && mkdir -p {params.volume_name}/{params.tmpdir}
         singularity exec -B {params.volume_name}:/data {params.volume_name}/images/mmseqs2.sif /bin/bash -c "cd /data && mmseqs easy-search {input.aa} {input.database} {output.ofmt6} /data/{params.tmpdir} --threads 20 --format-mode 0 --start-sens 2 -s 7 --sens-steps 3"
         rm -rf {params.volume_name}/{params.tmpdir}
         """
 
-# Rule to get best hits from MMseqs outputs
+# NCBI subjects whose FASTA header has no description (only an ID), e.g. the
+# 49,542 "AA...-RA" proteins of GenomesDatabase.v1 (an oat proteome added from
+# CoGe without names). Used to prefer a NAMED best hit (see best_hits).
+PREFER_NAMED = config.get("ncbi_prefer_named_hits", True)
+
+rule ncbi_unnamed_subjects:
+    input:
+        ncbi_data_file
+    output:
+        "mmseqs_output/ncbi_unnamed_subjects.txt"
+    shell:
+        """
+        awk '/^>/ && $0 !~ /^>[^ \t]+[ \t]+[^ \t]/ {{ print substr($1, 2) }}' {input} > {output}
+        echo "NCBI subjects without a description: $(wc -l < {output})"
+        """
+
+# Best hit per protein (highest bitscore, e-value < 1e-5). For the 'ncbi' DB,
+# with ncbi_prefer_named_hits: the best hit WITH a description is reported;
+# the unnamed best hit is kept only when no named hit passes the e-value cut.
 rule best_hits:
     input:
-        ofmt6="mmseqs_output/{species_name}_{database_name}.ofmt6"
+        ofmt6="mmseqs_output/{species_name}_{database_name}.ofmt6",
+        unnamed=lambda wc: ["mmseqs_output/ncbi_unnamed_subjects.txt"] if (wc.database_name == "ncbi" and PREFER_NAMED) else []
     output:
         best_hits_output="mmseqs_output/{species_name}_{database_name}_best_hit.out"
     params:
         volume_name=volume_name
     shell:
         """
-        sort -k12 -t $'\t' -nr {input.ofmt6} | awk -F "\t" ' ! a[$1]++ && $11 < 1e-5' > {output.best_hits_output}
+        if [ -n "{input.unnamed}" ]; then
+          sort -k12 -t $'\t' -nr {input.ofmt6} \
+            | awk -F '\t' 'NR==FNR {{ u[$1]; next }}
+                $11 < 1e-5 {{ if (!($1 in best)) best[$1] = $0
+                              if (!($2 in u) && !($1 in named)) named[$1] = $0 }}
+                END {{ for (q in best) {{ print ((q in named) ? named[q] : best[q]) }} }}' {input.unnamed} - \
+            > {output.best_hits_output}
+        else
+          sort -k12 -t $'\t' -nr {input.ofmt6} | awk -F '\t' ' ! a[$1]++ && $11 < 1e-5' > {output.best_hits_output}
+        fi
         """
 
 rule interproscan:

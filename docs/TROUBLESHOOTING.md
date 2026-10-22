@@ -45,6 +45,7 @@ Every entry below is an error that actually happened while building and running 
 **Functional pipeline**
 - [#18 `Could not create symlink of /tmp/...` in rule `mmseqs2`](#18-could-not-create-symlink-of-tmp-in-rule-mmseqs2)
 - [#19 NCBI database FASTA with glued headers](#19-ncbi-database-fasta-with-glued-headers)
+- [#28 Most NCBI best hits are the same ID (`AA049522-RA`)](#28-most-ncbi-best-hits-are-the-same-id-aa049522-ra)
 - [#20 AGAT functional GFF rejects the InterProScan TSV](#20-agat-functional-gff-rejects-the-interproscan-tsv)
 - [#27 AGAT functional GFF: every gene is "hypothetical protein"](#27-agat-functional-gff-every-gene-is-hypothetical-protein)
 - [#21 InterProScan runs out of memory](#21-interproscan-runs-out-of-memory)
@@ -255,11 +256,16 @@ singularity exec -B $PWD:/data images/mmseqs2.sif bash -c "cd /data && mmseqs ea
 
 ### 19. NCBI database FASTA with glued headers
 
-Symptoms: tools such as AGAT or `samtools faidx` cannot find subjects, or a "protein" contains a header in its sequence.
+Symptoms: tools cannot find some subjects, or a "protein" contains a header in its sequence. The worst consequence is described in #28.
 
 **Cause.** In `GenomesDatabase.v1.prot`, some headers are glued to the end of the previous sequence line (no newline before `>`), and the first header has no `>`.
 
-**Fix.** The current pipeline no longer reads this FASTA directly: MMseqs2 searches the indexed DB, and descriptions come from the merged TSV. If you need the sequences, repair the headers first, e.g. by inserting a newline before every `>` that is not at the start of a line, and add the missing `>` on line 1.
+**Fix (handled).** Repair the FASTA once with `scripts/fix_fasta_headers.py`, then point the `ncbi` entry in `config.yaml` (both `path` and `ncbidata`) at the repaired file:
+```bash
+python3 scripts/fix_fasta_headers.py databases/current/GenomesDatabase.v1.prot databases/current/GenomesDatabase.v1.fixed.prot
+# records: 5989485  glued headers repaired: 49541  missing first '>' added: 1
+```
+The `mmseqs2` rule now refuses to search a FASTA target that has glued headers or does not start with `>`.
 
 ### 20. AGAT functional GFF rejects the InterProScan TSV
 
@@ -314,6 +320,21 @@ Use of uninitialized value $desc in pattern match (m//) at .../agat_sp_manage_fu
 **Fix (handled).** The `functional_gff` rule (`iwgc_functional_gff.py`) writes the functional GFF3 in the IWGC release layout straight from the merged TSV and InterProScan, without AGAT. Check the result with:
 ```bash
 grep -P "\tgene\t" <SP>.functional.gff3 | grep -c "Note=Unknown Protein"   # should be a minority
+```
+
+### 28. Most NCBI best hits are the same ID (`AA049522-RA`)
+
+Symptoms:
+- Thousands of proteins have the same NCBI best hit, `AA049522-RA`, with `Description not found` (TSV) or `Note=Unknown Protein:(...)` / `Dbxref=AA049522-RA:...` (GFF3).
+- Subject coordinates in `mmseqs_output/<SP>_ncbi.ofmt6` go up to the millions (e.g. `tstart=1071720`).
+
+**Cause.** This is the glued-header defect of #19. MMseqs only starts a new record at a `>` at the beginning of a line, so in the original `GenomesDatabase.v1.prot` everything after `>AA049522-RA` merged into **one 18,868,593 aa record**. That record holds the 49,542 `AA…` proteins, a whole proteome (described as *Avena sativa* in the IWGC v1 release `SalTr_v01.0.gff`). For a grass genome, that block contains the closest homolog of most genes, so it became the best hit of **26,230 of 44,960 *P. minor* v3 proteins (58 %)**, and of 28,207 in MAKER v2. It hides the real best hit. The IWGC v1 database already had this defect: all 21 `AA` hits in `SalTr_v01.0.gff` are `AA049522-RA`.
+
+**Fix (handled).** Use the repaired FASTA (#19) and rerun the `ncbi` search: delete `mmseqs_output/<SP>_ncbi.ofmt6` and `<SP>_ncbi_best_hit.out`, then rerun the pipeline. Only the NCBI column, the TSV and the functional GFF3 change; the UniRef50, InterPro, Pfam, SignalP/TargetP and MultiLoc2 results are not affected.
+
+After the repair, the 49,542 `AA…` proteins are separate records, but their headers have no name. For grass genomes they still win as the plain best hit (27,214 / 44,960 *P. minor* proteins). Use `ncbi_prefer_named_hits: true`, the default, to report the best **named** hit instead; see [FUNCTIONAL.md §3](FUNCTIONAL.md#3-mmseqs2--best_hits-homology). To check a finished run:
+```bash
+cut -f2 mmseqs_output/<SP>_ncbi_best_hit.out | sort | uniq -c | sort -rn | head -3   # no single subject should dominate
 ```
 
 ### 24. Fewer proteins in the functional TSV than genes in the GFF

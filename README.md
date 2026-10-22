@@ -77,6 +77,7 @@ IWGC_annotation_v3/
 │   └── scripts/
 │       ├── functional_merge.py   # merges all results into the TSV
 │       ├── ml2_one_by_one.sh     # MultiLoc2 driver
+│       ├── fix_fasta_headers.py    # repairs glued FASTA headers in the NCBI DB (run once)
 │       ├── iwgc_functional_gff.py  # IWGC-format functional GFF3 (Dbxref/Ontology_term/Note on genes)
 │       └── make_geneid_map.sh      # NCBI gene2refseq -> protein/GeneID table for Dbxref
 ├── docs/
@@ -171,7 +172,7 @@ singularity exec images/busco.sif busco --download poales_odb10    # creates bus
 
 | Path | Content | Used by |
 |---|---|---|
-| `current/GenomesDatabase.v1.prot` | IWGC NCBI protein set (5.99 M proteins, FASTA + MMseqs index) | MMseqs2 `ncbi`: descriptions in the TSV and in the GFF3 `Note` |
+| `current/GenomesDatabase.v1.fixed.prot` | IWGC NCBI protein set (5.99 M proteins). **Must be repaired first** with `scripts/fix_fasta_headers.py`: the original `GenomesDatabase.v1.prot` merges 49,542 proteins into one record ([TROUBLESHOOTING #28](docs/TROUBLESHOOTING.md#28-most-ncbi-best-hits-are-the-same-id-aa049522-ra)) | MMseqs2 `ncbi`: descriptions in the TSV and in the GFF3 `Note` |
 | `herb_res_prots/total_KO_labeled.fasta` | herbicide-resistance KO protein set | MMseqs2 `herbres` |
 | `mmseqs_db/uniref50` | UniRef50 MMseqs2 database (`mmseqs databases UniRef50 ...`) | MMseqs2 `uniref` |
 | `Pfam-A.hmm` (+ `hmmpress` files) | Pfam-A HMMs | `hmmscan` |
@@ -241,6 +242,7 @@ cp -r IWGC_annotation_v3/functional functional
 | `species_name` | output prefix |
 | `mmseqs_databases` | list of `{name, path}`; the `ncbi` entry is required and also needs `ncbidata` (FASTA with descriptions) |
 | `multiloc_script` | `ml2_one_by_one.sh` (do not change) |
+| `ncbi_prefer_named_hits` | report the best NCBI hit **with a description** (default `true`); the database contains 49,542 unnamed oat proteins that would otherwise be the best hit of most grass genes |
 | `annotation_version`, `gff_source` | release tag and column-2 source of the functional GFF3 (`v3`, `IWGC_v3`) |
 | `functional_tools` | text of the `##Tool` header line |
 | `ncbi_geneid_map` | optional `protein<TAB>GeneID` table for the `Dbxref` GeneID field (e.g. from NCBI `gene2refseq`) |
@@ -360,7 +362,7 @@ Files in [`results/PhaMi/`](results/PhaMi/):
 | Median protein (longest isoform) | 353 aa | – |
 | AUGUSTUS accuracy | 0.75 | – |
 | Gene-prediction wall-clock | **~11 h** (1 job, 48 CPUs) | ~5 days (~30 jobs, ~12–13 k CPU-h) |
-| Functional: NCBI / UniRef50 hit | 96.8 % / 96.9 % | 97.3 % / 97.7 % |
+| Functional: NCBI hit with product name / UniRef50 hit | 96.3 % / 96.9 % | 96.7 % / 97.7 % |
 | Functional: InterPro / GO | 87.5 % / 70.2 % | 89.1 % / 69.6 % |
 | Functional: herbicide-resistance hits | 429 | 291 |
 
@@ -379,6 +381,8 @@ Before v3, BRAKER had been run on this genome in protein-only mode with 15 per-c
 - Gene models whose BRAKER protein has an internal stop codon (a few GeneMark.hmm3 predictions) are dropped before ID numbering (`drop_internal_stop_models`).
 
 **Functional (vs. IWGC_Funcional)**
+- **Database fix:** `GenomesDatabase.v1.prot` had glued FASTA headers that merged 49,542 proteins into one 18.9 M aa record, the best hit of 58 % of *P. minor* genes. The repaired FASTA is now required (`fix_fasta_headers.py`), and the `mmseqs2` rule refuses a FASTA with glued headers.
+- **Named NCBI hits:** `best_hits` reports the best NCBI hit that has a product name (`ncbi_prefer_named_hits`), so 96 % of *P. minor* proteins get a name instead of 36 %.
 - **Bug fix:** the parallel MMseqs2 searches shared `/tmp` and raced on MMseqs' `latest` symlink, which **silently dropped the NCBI search**. Each database now has its own tmp directory.
 - **New rule `order_tsv`:** the TSV is written in assembly order, taken from the input GFF3 (AGAT sorts sequence names alphabetically, so its order cannot be used). An alphabetical copy is kept.
 - **New rule `functional_gff`** (`iwgc_functional_gff.py`): writes the functional GFF3 in the **IWGC release layout**, the same layout as the IWGC v1 files such as `SalTr_v01.0.gff` (GeneIDs from NCBI gene2refseq via `make_geneid_map.sh`). It replaces the earlier AGAT step (`agat_sp_manage_functional_annotation.pl`), which cannot parse NCBI FASTA headers and wrote `product=hypothetical protein` for **every** gene. This affected the MAKER v2 functional GFF as well; see [TROUBLESHOOTING #27](docs/TROUBLESHOOTING.md#27-agat-functional-gff-every-gene-is-hypothetical-protein).
@@ -388,7 +392,7 @@ Before v3, BRAKER had been run on this genome in protein-only mode with 15 per-c
 
 ## 12. Troubleshooting
 
-[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) lists every error met while running this pipeline: the message, the cause and the fix. It covers 27 entries, including container paths, file quotas, BRAKER modes, BUSCO 0 %, the MMseqs `/tmp` race, AGAT and InterProScan.
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) lists every error met while running this pipeline: the message, the cause and the fix. It covers 28 entries, including container paths, file quotas, BRAKER modes, BUSCO 0 %, the MMseqs `/tmp` race, AGAT and InterProScan.
 
 ---
 
