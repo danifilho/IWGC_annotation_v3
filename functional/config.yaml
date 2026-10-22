@@ -25,7 +25,7 @@ mmseqs_databases:
   - name: 'ncbi'
     # Use the REPAIRED FASTA (scripts/fix_fasta_headers.py): the original
     # GenomesDatabase.v1.prot has glued headers that merge 49,542 proteins into
-    # one 18.9 M aa record (AA049522-RA). See docs/TROUBLESHOOTING.md #28.
+    # one 18.9 M aa record (AA049522-RA). See the wiki: Troubleshooting #28.
     path: 'databases/current/GenomesDatabase.v1.fixed.prot'
     ncbidata: 'databases/current/GenomesDatabase.v1.fixed.prot'
   - name: 'herbres'
