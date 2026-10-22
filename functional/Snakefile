@@ -317,10 +317,12 @@ rule generate_tsv:
 
 
 
-# functional_merge.py writes the TSV in alphabetical ID order; reorder it to
-# assembly order = order of the mRNAs in the INPUT GFF (the structural GFF3 is
-# sorted by genome FASTA order). The AGAT/gffread files can't be used for
-# this: AGAT sorts sequence IDs alphabetically (Chr00, Chr01B, Chr01C, ...).
+# functional_merge.py writes the TSV in alphabetical ID order. This rule
+#  - reorders it to assembly order = order of the mRNAs in the INPUT GFF (the
+#    structural GFF3 is sorted by genome FASTA order; AGAT/gffread outputs can't
+#    be used: AGAT sorts sequence IDs alphabetically: Chr00, Chr01B, Chr01C, ...)
+#  - adds the position of each annotated mRNA after "ID sequence":
+#    Gene ID, Chromosome, Start, End, Strand (1-based, inclusive, from the GFF).
 rule order_tsv:
     input:
         tsv="functional_outputs/functional_annotation.alphabetical.tsv",
@@ -329,10 +331,24 @@ rule order_tsv:
         "functional_outputs/functional_annotation.tsv"
     shell:
         r"""
-        awk -F'\t' 'NR==FNR {{ if ($3=="mRNA" && match($9, /ID=[^;]+/)) {{ id = substr($9, RSTART+3, RLENGTH-3); if (!(id in ord)) ord[id] = ++n }}; next }}
-                    FNR==1 {{ print "0\t" $0; next }}
-                    {{ print (($1 in ord) ? ord[$1] : 999999999) "\t" $0 }}' {input.gff} {input.tsv} \
-          | sort -t $'\t' -k1,1n -s | cut -f2- > {output}
+        awk -F'	' -v OFS='	' '
+          NR==FNR {{
+            if ($3=="mRNA" && match($9, /ID=[^;]+/)) {{
+              id = substr($9, RSTART+3, RLENGTH-3)
+              if (!(id in ord)) {{
+                ord[id] = ++n
+                gene = (match($9, /Parent=[^;]+/)) ? substr($9, RSTART+7, RLENGTH-7) : "N/A"
+                pos[id] = gene OFS $1 OFS $4 OFS $5 OFS $7
+              }}
+            }}
+            next
+          }}
+          FNR==1 {{ rest = $0; sub(/^[^	]*	/, "", rest)
+                   print 0, $1, "Gene ID", "Chromosome", "Start", "End", "Strand", rest; next }}
+          {{ rest = $0; sub(/^[^	]*	/, "", rest)
+            if ($1 in ord) print ord[$1], $1, pos[$1], rest
+            else           print 999999999, $1, "N/A", "N/A", "N/A", "N/A", "N/A", rest }}
+        ' {input.gff} {input.tsv}           | sort -t $'	' -k1,1n -s | cut -f2- > {output}
         """
 
 # Functional GFF3 in the IWGC release layout (same as SalTr_v01.0.gff):

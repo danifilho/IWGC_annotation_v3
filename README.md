@@ -336,7 +336,8 @@ Chr01C IWGC_v3 mRNA 1482104 1484206 . - . ID=PhaMiChr01Cg000020-mRNA-1;Parent=Ph
 | `Note` | `<NCBI description>:(<db>|<accession>|<name>)`, using the lowest-e-value InterPro entry (or a member-database signature when no InterPro entry exists). Genes without an NCBI hit get `Unknown Protein`. |
 
 TSV columns:
-- `ID sequence`
+- `ID sequence` (the annotated mRNA = longest isoform)
+- `Gene ID`, `Chromosome`, `Start`, `End`, `Strand`: position of that mRNA, taken from the structural GFF3 (1-based, inclusive)
 - `NCBI DESCRIPTION`, `NCBI Subject;E-value;Bit`
 - `herbres Subject;E-value;Bit`, `uniref Subject;E-value;Bit`
 - `SignalP Pos;Pr`, `TargetP ...`, `MULTILOC`

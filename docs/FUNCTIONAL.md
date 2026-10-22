@@ -81,9 +81,11 @@ SignalP 5.0b (`-org euk`) and TargetP 2.0 (`-org pl`) → `sigtarp_outputs/<SP>.
 
 ## 8. `generate_tsv` → `order_tsv`: merged table
 
-`functional_merge.py` merges every result into one row per protein. It writes `functional_annotation.alphabetical.tsv`; `order_tsv` then reorders it into **assembly order** (the order of `<SP>.aa`, which follows the GFF), giving `functional_annotation.tsv`.
+`functional_merge.py` merges every result into one row per protein and writes `functional_annotation.alphabetical.tsv`. `order_tsv` then produces `functional_annotation.tsv`:
+- rows are reordered into **assembly order**, following the mRNAs in the input structural GFF3;
+- five columns are added after `ID sequence`: **Gene ID, Chromosome, Start, End and Strand** of the annotated mRNA, taken from the structural GFF3 (1-based, inclusive).
 
-Columns: `ID sequence`, `NCBI DESCRIPTION`, `NCBI Subject;E-value;Bit`, `herbres ...`, `uniref ...`, `SignalP Pos;Pr`, `TargetP ...`, `MULTILOC`, `IPRSCAN GO`, `IPRSCAN IPR`, `Hmmer Pfam`.
+Columns: `ID sequence`, `Gene ID`, `Chromosome`, `Start`, `End`, `Strand`, `NCBI DESCRIPTION`, `NCBI Subject;E-value;Bit`, `herbres ...`, `uniref ...`, `SignalP Pos;Pr`, `TargetP ...`, `MULTILOC`, `IPRSCAN GO`, `IPRSCAN IPR`, `Hmmer Pfam`.
 
 ***P. minor* coverage** (file [`results/PhaMi/functional/coverage.tsv`](../results/PhaMi/functional/coverage.tsv)), compared with the MAKER v2 annotation run through the same pipeline:
 
