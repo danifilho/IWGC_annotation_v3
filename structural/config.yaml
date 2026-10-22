@@ -46,6 +46,10 @@ busco_threads: 16
 # AUGUSTUS species name for the trained model (must not exist yet)
 braker_species: PhaMi_v3
 
+# Drop gene models whose BRAKER protein contains an internal stop codon
+# (a few GeneMark.hmm3 predictions do). Done before ID numbering.
+drop_internal_stop_models: true
+
 # ---------------------------------------------------------------- QC
 # Local BUSCO lineage directory (compute nodes usually have no internet)
 busco_lineage: busco_downloads/lineages/poales_odb10

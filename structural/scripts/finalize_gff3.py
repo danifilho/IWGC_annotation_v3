@@ -12,12 +12,20 @@ The stop codon is folded into the CDS when a source left it out (GeneMark
 excludes it, AUGUSTUS includes it), so every CDS ends with its stop codon.
 Isoforms are numbered by start coordinate, then by original transcript ID.
 
-Usage: finalize_gff3.py braker.gtf genome.fa.fai ORG > final.gff3
+Optional EXCLUDE file: BRAKER transcript IDs (one per line) to leave out, e.g.
+models whose braker.aa protein has an internal stop codon (GeneMark.hmm3 emits
+a few). They are removed BEFORE numbering, so gene IDs stay contiguous; genes
+left without transcripts disappear.
+
+Usage: finalize_gff3.py braker.gtf genome.fa.fai ORG [EXCLUDE] > final.gff3
 """
 import re, sys
 from collections import defaultdict
 
-def main(gtf, fai, org):
+def main(gtf, fai, org, exclude=None):
+    skip = set()
+    if exclude:
+        skip = {l.split()[0] for l in open(exclude) if l.strip()}
     order = [l.split('\t')[0] for l in open(fai) if l.strip()]
     rank = {c: i for i, c in enumerate(order)}
     tx = defaultdict(lambda: {'cds': [], 'stop': [], 'seq': None, 'strand': None, 'gene': None})
@@ -28,6 +36,8 @@ def main(gtf, fai, org):
         if len(f) != 9 or f[2] not in ('CDS', 'stop_codon'):
             continue
         t = re.search(r'transcript_id "([^"]+)"', f[8]).group(1)
+        if t in skip:
+            continue
         g = re.search(r'gene_id "([^"]+)"', f[8]).group(1)
         r = tx[t]
         r['seq'], r['strand'], r['gene'] = f[0], f[6], g
@@ -85,9 +95,10 @@ def main(gtf, fai, org):
                 phase = (3 - done % 3) % 3
                 out.write(f"{seq}\tBRAKER3\tCDS\t{a}\t{b}\t.\t{strand}\t{phase}\tID={mid}:cds;Parent={mid}\n")
                 done += b - a + 1
-    sys.stderr.write(f"genes={len(blocks)} transcripts={n_tx} stop_codons_folded_into_CDS={n_fold}\n")
+    sys.stderr.write(f"genes={len(blocks)} transcripts={n_tx} stop_codons_folded_into_CDS={n_fold} "
+                     f"excluded_transcripts={len(skip)}\n")
 
 if __name__ == '__main__':
-    if len(sys.argv) != 4:
+    if len(sys.argv) not in (4, 5):
         sys.exit(__doc__)
     main(*sys.argv[1:])

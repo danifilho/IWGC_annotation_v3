@@ -1,0 +1,11 @@
+column	v3_BRAKER3_proteins	v3_pct	v2_MAKER_proteins	v2_pct
+proteins_annotated	44960	100.0	47494	100.0
+NCBI_hit	43528	96.8	46202	97.3
+NCBI_description	17298	38.5	17995	37.9
+herbicide_resistance_hit	429	1.0	291	0.6
+UniRef50_hit	43580	96.9	46401	97.7
+SignalP_signal_peptide	4986	11.1	4419	9.3
+MultiLoc2_prediction	44949	100.0	47494	100.0
+InterProScan_GO	31545	70.2	33046	69.6
+InterProScan_IPR	39362	87.5	42301	89.1
+Pfam_column_filled	44960	100.0	47494	100.0

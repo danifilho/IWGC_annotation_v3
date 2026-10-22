@@ -31,6 +31,7 @@ rule all:
         f"final_outputs/{SP}.v3.cds.fa",
         f"final_outputs/{SP}.v3.longest.proteins.fa",
         f"final_outputs/{SP}.v3.stats.txt",
+        f"final_outputs/{SP}.v3.excluded_internal_stop.txt",
         f"busco_outputs/{SP}.v3.busco_summary.txt"
 
 
@@ -194,20 +195,35 @@ rule braker:
 
 # ------------------------------------------------------------------ release
 rule finalize_gff3:
-    # braker.gtf -> GFF3 with lab IDs (PhaMiChr01Cg000010, -mRNA-1, :1, :cds)
+    # braker.gtf -> GFF3 with lab IDs (PhaMiChr01Cg000010, -mRNA-1, :1, :cds).
+    # Models whose BRAKER protein has an internal stop (a few GeneMark.hmm3
+    # predictions) are dropped before numbering when drop_internal_stop_models.
     input:
         gtf=rules.braker.output.gtf,
+        aa=rules.braker.output.aa,
         fai=rules.faidx_masked.output
     output:
-        f"final_outputs/{SP}.v3.gff3"
+        gff=f"final_outputs/{SP}.v3.gff3",
+        excluded=f"final_outputs/{SP}.v3.excluded_internal_stop.txt"
+    params:
+        drop=config.get("drop_internal_stop_models", True)
     singularity:
         BRAKER_SIF
     shell:
-        "python3 {V}/scripts/finalize_gff3.py {V}/{input.gtf} {V}/{input.fai} {SP} > {V}/{output}"
+        """
+        if [ "{params.drop}" = "True" ]; then
+          awk '/^>/{{ if (h && s ~ /\\*./) print h; h = substr($1,2); s = ""; next }} {{ s = s $0 }}
+               END {{ if (s ~ /\\*./) print h }}' {V}/{input.aa} > {V}/{output.excluded}
+        else
+          : > {V}/{output.excluded}
+        fi
+        echo "transcripts excluded (internal stop): $(wc -l < {V}/{output.excluded})"
+        python3 {V}/scripts/finalize_gff3.py {V}/{input.gtf} {V}/{input.fai} {SP} {V}/{output.excluded} > {V}/{output.gff}
+        """
 
 rule extract_sequences:
     input:
-        gff=rules.finalize_gff3.output,
+        gff=rules.finalize_gff3.output.gff,
         genome=MASKED
     output:
         cds=f"final_outputs/{SP}.v3.cds.fa",

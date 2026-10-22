@@ -13,7 +13,7 @@ Snakefile: [`functional/Snakefile`](../functional/Snakefile) · config: [`functi
    agat GFF + ncbi best hits + InterProScan ─► agat_functional_gff ─► <SP>.functional.gff
 ```
 
-Each section gives what the step does, the tool, its outputs, and the result on ***Phalaris minor* v3** (input: 44,965 genes / 49,216 mRNAs). Steps marked † are still running on *P. minor*; their numbers are added when the run finishes.
+Each section gives what the step does, the tool, its outputs, and the result on ***Phalaris minor* v3** (input: 44,965 genes / 49,216 mRNAs). All numbers below come from the completed *P. minor* v3 run.
 
 ---
 
@@ -40,17 +40,19 @@ Outputs: `mmseqs_output/<SP>_<db>.ofmt6` (all hits) and `<SP>_<db>_best_hit.out`
 |---|---|---|
 | UniRef50 | **43,580 / 44,960 (96.9 %)** | ~25 min |
 | herbicide-resistance KO set | **429** | ~1 min |
-| NCBI GenomesDatabase v1 | † | ~52 min (20 threads) |
+| NCBI GenomesDatabase v1 | **43,528 (96.8 %)** (11,470 distinct subjects) | ~52 min (20 threads) |
 
 ## 4. `interproscan`: domains, GO, pathways
 
 InterProScan 5.77-108.0 with `--goterms --pathways --iprlookup`, run in **chunks of 2,000 proteins** (avoids the LevelDB out-of-memory crash; chunks that are already done are skipped, so the step can resume) → `iprscan_output/<SP>.iprscan.tsv`.
 
-***P. minor*:** 23 chunks at about 1.5 h each (30 CPUs), so **~34 h**. This is the bottleneck of the functional module. †
+***P. minor*:** 23 chunks at about 1.5 h each (30 CPUs), so **~34 h**. This is the bottleneck of the functional module. Result: **39,362 proteins (87.5 %) with InterPro entries** and **31,545 (70.2 %) with GO terms**.
 
 ## 5. `prot_list` + `multiloc`: subcellular localization
 
-`prot_list` collects the InterProScan GO terms per protein. MultiLoc2 (plant model, using those GO terms) then runs in about 20 parallel splits → `multiloc_outputs/<SP>_ml2.txt`. †
+`prot_list` collects the InterProScan GO terms per protein. MultiLoc2 (plant model, using those GO terms) then runs in about 20 parallel splits → `multiloc_outputs/<SP>_ml2.txt`.
+
+***P. minor*:** a prediction for 44,949 proteins (100 %), in **~9.5 h** after InterProScan finished.
 
 ## 6. `hmmer`: Pfam domains
 
@@ -72,14 +74,31 @@ SignalP 5.0b (`-org euk`) and TargetP 2.0 (`-org pl`) → `sigtarp_outputs/<SP>.
 
 Columns: `ID sequence`, `NCBI DESCRIPTION`, `NCBI Subject;E-value;Bit`, `herbres ...`, `uniref ...`, `SignalP Pos;Pr`, `TargetP ...`, `MULTILOC`, `IPRSCAN GO`, `IPRSCAN IPR`, `Hmmer Pfam`.
 
-***P. minor* coverage:** †
+***P. minor* coverage** (file [`results/PhaMi/functional/coverage.tsv`](../results/PhaMi/functional/coverage.tsv)), compared with the MAKER v2 annotation run through the same pipeline:
+
+| Column | v3 (44,960 proteins) | MAKER v2 (47,494 proteins) |
+|---|---|---|
+| NCBI hit | 43,528 (96.8 %) | 46,202 (97.3 %) |
+| NCBI description (not "Description not found") | 17,298 (38.5 %) | 17,995 (37.9 %) |
+| herbicide-resistance hit | 429 | 291 |
+| UniRef50 hit | 43,580 (96.9 %) | 46,401 (97.7 %) |
+| SignalP signal peptide | 4,986 (11.1 %) | 4,419 (9.3 %) |
+| MultiLoc2 | 44,949 (100 %) | 47,494 (100 %) |
+| InterProScan GO | 31,545 (70.2 %) | 33,046 (69.6 %) |
+| InterProScan IPR | 39,362 (87.5 %) | 42,301 (89.1 %) |
+
+Notes on these columns:
+- The `Hmmer Pfam` column is filled for every protein in both versions: `functional_merge.py` records the hmmscan hits without an e-value cut, so use InterPro or the Pfam terms in the functional GFF for strict domain calls.
+- Many NCBI subjects are gene-model IDs from the GenomesDatabase without a text description, which is why only about 38 % of proteins have a description.
 
 ## 9. `agat_functional_gff`: functional GFF
 
 1. `extract_hits.py` writes the NCBI subjects of the best hits, repairing the glued headers of the NCBI FASTA on the fly.
 2. `agat_sp_manage_functional_annotation.pl` adds product names (from the NCBI hits) and InterPro / GO / Pfam / PANTHER / … terms (from InterProScan without the pathways column) to the longest-isoform GFF → `functional_outputs/<SP>.functional.gff`.
 
-The per-database term lists are written to `functional_outputs/agat_<SP>/` (`GO.txt`, `Pfam.txt`, `InterPro.txt`, …), together with AGAT's `report.txt`. †
+The per-database term lists are written to `functional_outputs/agat_<SP>/` (`GO.txt`, `Pfam.txt`, `InterPro.txt`, …), together with AGAT's `report.txt`.
+
+***P. minor*:** 11,470 NCBI subjects extracted (all found), and `PhaMi.functional.gff` written in about 3 min. AGAT prints `Use of uninitialized value $desc` for database headers without a description; this is harmless. AGAT's report: [`results/PhaMi/functional/agat_report.txt`](../results/PhaMi/functional/agat_report.txt).
 
 ---
 
@@ -92,4 +111,6 @@ The per-database term lists are written to `functional_outputs/agat_<SP>/` (`GO.
 | HMMER | ~7.5 h (in parallel with InterProScan) |
 | SignalP + TargetP | ~1.7 h (starts after HMMER; in parallel with InterProScan) |
 | InterProScan | ~34 h (bottleneck) |
-| MultiLoc2, merge, AGAT | † |
+| MultiLoc2 | ~9.5 h (after InterProScan) |
+| merge + order + AGAT functional GFF | ~5 min |
+| **Total** | **~44 h** wall-clock (2026-10-20 12:59 → 10-22 08:24, plus the ~5 min finishing run) |

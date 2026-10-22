@@ -7,10 +7,10 @@ Structural and functional genome annotation for the **International Weed Genomic
 
 v3 replaces MAKER (v2, [IWGC_Structural](https://github.com/danifilho/IWGC_Structural)) with BRAKER3. On *Phalaris minor* (4.9 Gb, allotetraploid) it reaches the same BUSCO completeness as MAKER (**95.9 % vs 96.1 %**) in **~11 h instead of ~5 days**. The functional module is [IWGC_Funcional](https://github.com/danifilho/IWGC_Funcional) plus bug fixes and two new output steps.
 
-> **Validation status (2026-10-21)**
+> **Validation (2026-10-22)**
 >
-> - **Tested at scale:** every structural step ran on the full *P. minor* genome as standalone SLURM jobs, which produced the results in `results/PhaMi`. The functional Snakefile is IWGC_Funcional's, already used for v2.
-> - **Being validated now:** the structural `Snakefile` that packages those steps (single-chromosome end-to-end test) and the two new functional rules (`order_tsv`, `agat_functional_gff`). The MMseqs `/tmp` fix passed a Snakemake dry run. This note will be removed once both tests finish.
+> - **Structural `Snakefile`:** tested end-to-end on a single chromosome (Chr07B, 216 Mb). It ran with no errors in 3 h (48 CPUs), with BRAKER3 in ETP mode and AUGUSTUS accuracy 0.71. The individual steps also ran on the full 4.9 Gb genome (results below).
+> - **Functional `Snakefile`:** completed on the full *P. minor* v3 proteome (44,960 proteins), including the new `order_tsv` and `agat_functional_gff` rules.
 
 ---
 
@@ -225,6 +225,7 @@ cp -r IWGC_annotation_v3/functional functional
 | `minimap2_threads` / `minimap2_index_batch` | alignment threads / `-I` (must exceed the genome size) | 32 / `16G` |
 | `braker_threads` | BRAKER threads (**≤ 48**) | 48 |
 | `braker_species` | name of the new AUGUSTUS model | `PhaMi_v3` |
+| `drop_internal_stop_models` | drop models whose BRAKER protein has an internal stop codon (before ID numbering) | `true` |
 | `busco_lineage` | local lineage directory | `busco_downloads/lineages/poales_odb10` |
 | `busco_max_protein_length` | longer proteins are excluded from BUSCO | 10000 |
 | `busco_threads` | BUSCO threads | 16 |
@@ -286,6 +287,7 @@ grep -n "Error in rule" *.err
 | `final_outputs/<SP>.v3.proteins.fa`, `<SP>.v3.cds.fa` | all isoforms, same IDs as the GFF3 |
 | `final_outputs/<SP>.v3.longest.proteins.fa` | one protein per gene |
 | `final_outputs/<SP>.v3.stats.txt` | gene-set statistics and sanity checks |
+| `final_outputs/<SP>.v3.excluded_internal_stop.txt` | BRAKER transcripts dropped for internal stop codons |
 | `busco_outputs/<SP>.v3.busco_summary.txt` | BUSCO summary (+ `busco_<SP>.tar.gz`) |
 | `braker_outputs/` | full BRAKER run (`braker.gtf`, `braker.log`, hints, GeneMark-ETP, AUGUSTUS) |
 | `braker_inputs/augustus_config/species/<braker_species>` | **trained AUGUSTUS model** (reusable) |
@@ -322,7 +324,10 @@ Intermediate outputs of every step are listed in [docs/FUNCTIONAL.md](docs/FUNCT
 
 ## 10. Example results: *Phalaris minor*
 
-Files: [`results/PhaMi/`](results/PhaMi/). This includes the final GFF3, [`PhaMi.v3.gff3.gz`](results/PhaMi/structural/PhaMi.v3.gff3.gz).
+Files in [`results/PhaMi/`](results/PhaMi/):
+- [`PhaMi.v3.gff3.gz`](results/PhaMi/structural/PhaMi.v3.gff3.gz): the structural GFF3.
+- [`PhaMi.v3.functional_annotation.tsv.gz`](results/PhaMi/functional/PhaMi.v3.functional_annotation.tsv.gz): the functional table.
+- [`PhaMi.v3.functional.gff.gz`](results/PhaMi/functional/PhaMi.v3.functional.gff.gz): the functional GFF.
 
 | | **v3 (this pipeline)** | MAKER v2 |
 |---|---|---|
@@ -333,6 +338,9 @@ Files: [`results/PhaMi/`](results/PhaMi/). This includes the final GFF3, [`PhaMi
 | Median protein (longest isoform) | 353 aa | – |
 | AUGUSTUS accuracy | 0.75 | – |
 | Gene-prediction wall-clock | **~11 h** (1 job, 48 CPUs) | ~5 days (~30 jobs, ~12–13 k CPU-h) |
+| Functional: NCBI / UniRef50 hit | 96.8 % / 96.9 % | 97.3 % / 97.7 % |
+| Functional: InterPro / GO | 87.5 % / 70.2 % | 89.1 % / 69.6 % |
+| Functional: herbicide-resistance hits | 429 | 291 |
 
 Before v3, BRAKER had been run on this genome in protein-only mode with 15 per-chromosome models. That run reached only C:67.7 % / M:30.1 %. [docs/CASE_STUDY_PhaMi.md](docs/CASE_STUDY_PhaMi.md) explains why, and which v3 design choices follow from it.
 
@@ -346,18 +354,19 @@ Before v3, BRAKER had been run on this genome in protein-only mode with 15 per-c
 - Protein DB = close relative **+ OrthoDB Viridiplantae**, with every file listed explicitly in the config.
 - A new IWGC-ID GFF3 writer (`finalize_gff3.py`) that handles BRAKER's mixed AUGUSTUS/GeneMark GTF and computes CDS phases.
 - A built-in GeneMark file-count cleanup, BAI→CSI fallback for large chromosomes, and a BUSCO guard against giant proteins.
+- Gene models whose BRAKER protein has an internal stop codon (a few GeneMark.hmm3 predictions) are dropped before ID numbering (`drop_internal_stop_models`).
 
 **Functional (vs. IWGC_Funcional)**
 - **Bug fix:** the parallel MMseqs2 searches shared `/tmp` and raced on MMseqs' `latest` symlink, which **silently dropped the NCBI search**. Each database now has its own tmp directory.
-- **New rule `order_tsv`:** the TSV is written in assembly order (an alphabetical copy is kept).
+- **New rule `order_tsv`:** the TSV is written in assembly order, taken from the input GFF3 (AGAT sorts sequence names alphabetically, so its order cannot be used). An alphabetical copy is kept.
 - **New rule `agat_functional_gff`:** functional GFF via AGAT, with `extract_hits.py` repairing the glued headers of the NCBI FASTA on the fly.
-- The duplicate `configfile:` line was removed.
+- The duplicate `configfile:` line was removed, and `egrep \>` became `grep '^>'` (it raised a Python `SyntaxWarning`).
 
 ---
 
 ## 12. Troubleshooting
 
-[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) lists every error met while running this pipeline: the message, the cause and the fix. It covers 24 entries, including container paths, file quotas, BRAKER modes, BUSCO 0 %, the MMseqs `/tmp` race, AGAT and InterProScan.
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) lists every error met while running this pipeline: the message, the cause and the fix. It covers 25 entries, including container paths, file quotas, BRAKER modes, BUSCO 0 %, the MMseqs `/tmp` race, AGAT and InterProScan.
 
 ---
 

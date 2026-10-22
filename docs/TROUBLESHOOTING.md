@@ -19,36 +19,38 @@ Every entry below is an error that actually happened while building and running 
 ## Contents
 
 **Containers, paths and quotas**
-1. [`Genome file ... does not exist` inside a container](#1-genome-file--does-not-exist-inside-a-container)
-2. [Scratch file quota explodes during BRAKER (GeneMark)](#2-scratch-file-quota-explodes-during-braker-genemark)
-3. [Home quota full / `disk quota exceeded` while pulling images](#3-home-quota-full--disk-quota-exceeded-while-pulling-images)
-4. [`singularity pull -q ...` prints the usage text](#4-singularity-pull--q--prints-the-usage-text)
-5. [BUSCO prints a Python traceback from `BuscoLogger.py`](#5-busco-prints-a-python-traceback-from-buscologgerpy)
+- [#1 `Genome file ... does not exist` inside a container](#1-genome-file--does-not-exist-inside-a-container)
+- [#2 Scratch file quota explodes during BRAKER (GeneMark)](#2-scratch-file-quota-explodes-during-braker-genemark)
+- [#3 Home quota full / `disk quota exceeded` while pulling images](#3-home-quota-full--disk-quota-exceeded-while-pulling-images)
+- [#4 `singularity pull -q ...` prints the usage text](#4-singularity-pull--q--prints-the-usage-text)
+- [#5 BUSCO prints a Python traceback from `BuscoLogger.py`](#5-busco-prints-a-python-traceback-from-buscologgerpy)
 
 **Structural pipeline (BRAKER3)**
-6. [`Only Protein input detected, BRAKER will be executed in EP mode (BRAKER2)`](#6-only-protein-input-detected-braker-will-be-executed-in-ep-mode-braker2)
-7. [Very low AUGUSTUS accuracy (< 0.5) and bad BUSCO](#7-very-low-augustus-accuracy--05-and-bad-busco)
-8. [The protein DB is much smaller than expected](#8-the-protein-db-is-much-smaller-than-expected)
-9. [`The number of threads was set to 64, which is greater than 48`](#9-the-number-of-threads-was-set-to-64-which-is-greater-than-48)
-10. [BRAKER rerun fails because the species already exists](#10-braker-rerun-fails-because-the-species-already-exists)
-11. [`samtools index` fails on large chromosomes](#11-samtools-index-fails-on-large-chromosomes)
-12. [minimap2 is slow, uses too much RAM or splits the index](#12-minimap2-is-slow-uses-too-much-ram-or-splits-the-index)
-13. [Iso-Seq: collapsed transcripts instead of reads](#13-iso-seq-collapsed-transcripts-instead-of-reads)
-14. [TSEBRA crashes with `invalid literal for int() ... '.'`](#14-tsebra-crashes-with-invalid-literal-for-int--)
-15. [`.gm_key` / GeneMark license](#15-gm_key--genemark-license)
+- [#6 `Only Protein input detected, BRAKER will be executed in EP mode (BRAKER2)`](#6-only-protein-input-detected-braker-will-be-executed-in-ep-mode-braker2)
+- [#7 Very low AUGUSTUS accuracy (< 0.5) and bad BUSCO](#7-very-low-augustus-accuracy--05-and-bad-busco)
+- [#8 The protein DB is much smaller than expected](#8-the-protein-db-is-much-smaller-than-expected)
+- [#9 `The number of threads was set to 64, which is greater than 48`](#9-the-number-of-threads-was-set-to-64-which-is-greater-than-48)
+- [#10 BRAKER rerun fails because the species already exists](#10-braker-rerun-fails-because-the-species-already-exists)
+- [#11 `samtools index` fails on large chromosomes](#11-samtools-index-fails-on-large-chromosomes)
+- [#12 minimap2 is slow, uses too much RAM or splits the index](#12-minimap2-is-slow-uses-too-much-ram-or-splits-the-index)
+- [#13 Iso-Seq: collapsed transcripts instead of reads](#13-iso-seq-collapsed-transcripts-instead-of-reads)
+- [#14 TSEBRA crashes with `invalid literal for int() ... '.'`](#14-tsebra-crashes-with-invalid-literal-for-int--)
+- [#15 `.gm_key` / GeneMark license](#15-gm_key--genemark-license)
+- [#25 Proteins with internal stop codons](#25-proteins-with-internal-stop-codons)
 
 **QC (BUSCO)**
-16. [BUSCO reports 0% (C:0%, F:0%, M:100%)](#16-busco-reports-0-c0-f0-m100)
-17. [Very high BUSCO "Duplicated"](#17-very-high-busco-duplicated)
+- [#16 BUSCO reports 0% (C:0%, F:0%, M:100%)](#16-busco-reports-0-c0-f0-m100)
+- [#17 Very high BUSCO "Duplicated"](#17-very-high-busco-duplicated)
 
 **Functional pipeline**
-18. [`Could not create symlink of /tmp/...` in rule `mmseqs2`](#18-could-not-create-symlink-of-tmp-in-rule-mmseqs2)
-19. [NCBI database FASTA with glued headers](#19-ncbi-database-fasta-with-glued-headers)
-20. [AGAT functional GFF rejects the InterProScan TSV](#20-agat-functional-gff-rejects-the-interproscan-tsv)
-21. [InterProScan runs out of memory](#21-interproscan-runs-out-of-memory)
-22. [`Failed to solve scheduling problem with ILP solver`](#22-failed-to-solve-scheduling-problem-with-ilp-solver)
-23. [`Directory cannot be locked`](#23-directory-cannot-be-locked)
-24. [Fewer proteins in the functional TSV than genes in the GFF](#24-fewer-proteins-in-the-functional-tsv-than-genes-in-the-gff)
+- [#18 `Could not create symlink of /tmp/...` in rule `mmseqs2`](#18-could-not-create-symlink-of-tmp-in-rule-mmseqs2)
+- [#19 NCBI database FASTA with glued headers](#19-ncbi-database-fasta-with-glued-headers)
+- [#20 AGAT functional GFF rejects the InterProScan TSV](#20-agat-functional-gff-rejects-the-interproscan-tsv)
+- [#21 InterProScan runs out of memory](#21-interproscan-runs-out-of-memory)
+- [#22 `Failed to solve scheduling problem with ILP solver`](#22-failed-to-solve-scheduling-problem-with-ilp-solver)
+- [#23 `Directory cannot be locked`](#23-directory-cannot-be-locked)
+- [#26 Snakemake reruns BRAKER after a small edit](#26-snakemake-reruns-braker-after-a-small-edit)
+- [#24 Fewer proteins in the functional TSV than genes in the GFF](#24-fewer-proteins-in-the-functional-tsv-than-genes-in-the-gff)
 
 ---
 
@@ -197,6 +199,16 @@ The crash is preceded by thousands of `no CDS nor exons` warnings.
 
 The GeneMark bundled in the braker3 containers only **tests** for `~/.gm_key` and runs without it. No license key is needed for this pipeline.
 
+### 25. Proteins with internal stop codons
+
+Symptom: `proteins with internal stop:` is above 0 in `final_outputs/<SP>.v3.stats.txt`, or `*` characters appear inside protein sequences.
+
+**Cause.** A few **GeneMark.hmm3** models in `braker.gtf` are translated with in-frame stops. The same stops are in BRAKER's own `braker.aa`, so the conversion to GFF3 is not the cause. On a single-chromosome test (Chr07B), 13 of 5,357 transcripts were affected; on the full *P. minor* genome, 1 of 49,216.
+
+**Fix (handled).** With `drop_internal_stop_models: true` (the default), `finalize_gff3` drops these transcripts **before** numbering the IDs, so the IDs stay contiguous. The dropped BRAKER IDs are listed in `final_outputs/<SP>.v3.excluded_internal_stop.txt`. The functional pipeline would drop them anyway (`gffread -J`).
+
+> Older versions of `gene_set_stats.sh` counted sequence **lines** containing `*` instead of proteins, which overstated this number (310 instead of 13).
+
 ---
 
 ## QC (BUSCO)
@@ -273,6 +285,21 @@ This is harmless: Snakemake falls back to the greedy scheduler. To silence it, a
 **Cause.** A previous Snakemake run was killed and left its lock behind.
 
 **Fix.** The `run_*.sb` scripts call `snakemake --unlock` first. Never run two Snakemake processes on the same workdir.
+
+### 26. Snakemake reruns BRAKER after a small edit
+
+Symptom: after editing a script, the config or the Snakefile, a rerun starts again from `isoseq_fasta`/`minimap2`/`braker`, and BRAKER (hours) is redone. Since the `braker` rule clears `braker_outputs/` when it starts, killing the job at that point also loses the previous BRAKER result.
+
+**Cause.** By default Snakemake also reruns jobs whose **code, parameters or software environment** changed, not only those whose inputs are newer. `isoseq_fasta` is a `temp()` output, so it is gone after the first run; any change upstream of it brings back the whole chain.
+
+**Fix.**
+- Always run with `--rerun-triggers mtime`, as `run_structural.sb` and `run_functional.sb` do.
+- To redo only the post-BRAKER steps, force them explicitly:
+  ```bash
+  snakemake --cores 16 --use-singularity --singularity-args "-B $PWD" --rerun-triggers mtime -R finalize_gff3
+  ```
+- Always check what will run with `snakemake -n --rerun-triggers mtime` first.
+- Keep a copy of `braker_outputs/` and of the trained species before experimenting.
 
 ### 24. Fewer proteins in the functional TSV than genes in the GFF
 

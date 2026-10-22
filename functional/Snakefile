@@ -171,7 +171,7 @@ rule prot_list:
     shell:
         """
         awk -F"\t" '$14 ~ /GO/ {{print $1,$14}}' {params.volume_name}/{input.iprscan_output} | sed 's/|/ /g' > {output.multigo}
-        egrep \> {params.volume_name}/{input.aa} | cut -b 2- | awk '{{print $1}}' > {output.prot_list}
+        grep '^>' {params.volume_name}/{input.aa} | cut -b 2- | awk '{{print $1}}' > {output.prot_list}
         rm -rf splits && mkdir splits
         cd splits
         split -n l/20 {params.volume_name}/{output.prot_list} #20 is the number of threads
@@ -276,19 +276,21 @@ rule generate_tsv:
 
 
 # functional_merge.py writes the TSV in alphabetical ID order; reorder it to
-# assembly order (the order of gff_read_output/*.aa, which follows the GFF).
+# assembly order = order of the mRNAs in the INPUT GFF (the structural GFF3 is
+# sorted by genome FASTA order). The AGAT/gffread files can't be used for
+# this: AGAT sorts sequence IDs alphabetically (Chr00, Chr01B, Chr01C, ...).
 rule order_tsv:
     input:
         tsv="functional_outputs/functional_annotation.alphabetical.tsv",
-        aa=f"gff_read_output/{species_name}.aa"
+        gff=f"inputs/{config['final_filtering_gff']}"
     output:
         "functional_outputs/functional_annotation.tsv"
     shell:
         r"""
-        awk -F'\t' 'NR==FNR {{ if (/^>/) {{ split(substr($0,2), h, /[ \t]/); ord[h[1]] = ++n }}; next }}
+        awk -F'\t' 'NR==FNR {{ if ($3=="mRNA" && match($9, /ID=[^;]+/)) {{ id = substr($9, RSTART+3, RLENGTH-3); if (!(id in ord)) ord[id] = ++n }}; next }}
                     FNR==1 {{ print "0\t" $0; next }}
-                    {{ print (($1 in ord) ? ord[$1] : 999999999) "\t" $0 }}' {input.aa} {input.tsv} \
-          | sort -t $'\t' -k1,1n | cut -f2- > {output}
+                    {{ print (($1 in ord) ? ord[$1] : 999999999) "\t" $0 }}' {input.gff} {input.tsv} \
+          | sort -t $'\t' -k1,1n -s | cut -f2- > {output}
         """
 
 # Functional GFF: AGAT adds NCBI product names (best hits) and InterProScan

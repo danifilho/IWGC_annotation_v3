@@ -10,7 +10,7 @@ awk -F'\t' '$3=="CDS" { match($9, /Parent=[^;]+/); t = substr($9, RSTART+7, RLEN
         printf "single-exon transcripts: %d / %d (%.1f%%)\nmean CDS exons per transcript: %.2f\n", s, c, 100*s/c, e/c }' "$GFF"
 awk '/^>/{ if (l) print l; l=0; next } { l += length($0) } END { print l }' "$PROT" | sort -n \
   | awk '{ a[NR]=$1 } END { print "median protein length, all isoforms (aa): " a[int(NR/2)+1] "\nlongest protein (aa): " a[NR] }'
-echo "proteins with internal stop: $(awk '/^>/{next} /\*/{n++} END{print n+0}' "$PROT")"
+echo "proteins with internal stop: $(awk '/^>/{ if (s ~ /\*/) n++; s=""; next } { s = s $0 } END { if (s ~ /\*/) n++; print n+0 }' "$PROT")"
 echo "proteins not starting with M: $(awk '/^>/{getline; if (substr($0,1,1) != "M") n++} END{print n+0}' "$PROT")"
 echo "CDS length not multiple of 3: $(awk '/^>/{ if (h && l%3) n++; h=1; l=0; next } { l += length($0) } END { if (l%3) n++; print n+0 }' "$CDS")"
 echo "genes per sequence:"

@@ -93,9 +93,10 @@ Chr01C  BRAKER3  CDS   1429893 1430284 . - 0 ID=PhaMiChr01Cg000010-mRNA-1:cds;Pa
 - **Gene order:** genome FASTA order, then start coordinate.
 - **Gene IDs:** `<species><seqid>g<NNNNNN>`, with the counter increasing **by 10 across the whole genome** and never reset per chromosome.
 - **Transcripts:** isoforms are `-mRNA-1..n`, ordered by start coordinate; `braker_id=` keeps the original BRAKER ID.
+- **Internal stops:** with `drop_internal_stop_models: true`, transcripts whose `braker.aa` protein has an internal stop (a few GeneMark.hmm3 models) are dropped **before** numbering, and listed in `<SP>.v3.excluded_internal_stop.txt`.
 - **Exons and CDS:** BRAKER predicts no UTRs, so exons equal CDS. Stop codons are folded into the CDS whenever a source omits them. CDS phase is computed from the cumulative coding length.
 
-***P. minor*:** 44,965 genes, 49,216 mRNAs, 0 warnings. Phases were verified against gffread.
+***P. minor*:** 44,965 genes, 49,216 mRNAs, 0 warnings. Phases were verified against gffread. The released GFF3 was produced before the internal-stop filter existed; it contains 1 such model.
 
 ## 6. Sequences and statistics: `extract_sequences`
 

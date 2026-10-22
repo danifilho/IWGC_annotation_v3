@@ -45,4 +45,4 @@ MAKER also needed failed and restarted attempts (a 7-day timeout and a 2.5-day f
 ## Open questions
 
 - **Fewer genes on the C subgenome than on B** (21.1 k vs 23.8 k), although the C chromosomes are larger. The C subgenome is also more heavily masked (~92 % vs ~88 %), so possible over-masking by an uncurated EDTA library should be checked.
-- **45 k genes vs MAKER's 55 k at the same BUSCO.** The functional hit rates of each gene set should show whether MAKER's extra ~10 k genes are real.
+- **45 k genes vs MAKER's 55 k at the same BUSCO.** The functional pipeline answers this in part. After its filters, MAKER v2 keeps 47,494 complete proteins vs 44,960 for v3, and hit *rates* are almost identical (NCBI 97.3 vs 96.8 %, InterPro 89.1 vs 87.5 %). In absolute numbers, MAKER v2 has about 2,900 more proteins with InterPro domains (42,301 vs 39,362). This suggests that part of MAKER's extra models are real, domain-bearing genes that BRAKER3 missed. MAKER may also split some genes into several models, though, and about 7,600 of its models were partial and removed by `gffread -J`. Comparing the two gene sets locus by locus (e.g. with gffcompare) is the next step.
