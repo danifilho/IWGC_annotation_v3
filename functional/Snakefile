@@ -58,7 +58,7 @@ rule all:
     input:
         f"functional_outputs/functional_annotation.tsv",
         f"functional_outputs/functional_annotation.alphabetical.tsv",
-        f"functional_outputs/{species_name}.functional.gff"
+        f"functional_outputs/{species_name}.functional.gff3"
 
 rule agat:
     input:
@@ -293,30 +293,27 @@ rule order_tsv:
           | sort -t $'\t' -k1,1n -s | cut -f2- > {output}
         """
 
-# Functional GFF: AGAT adds NCBI product names (best hits) and InterProScan
-# GO/IPR/Pfam... terms to the longest-isoform GFF.
-rule agat_functional_gff:
+# Functional GFF3 in the IWGC release layout (same as SalTr_v01.0.gff):
+# Dbxref (NCBI hit:GeneID:bitscore), Ontology_term (GO) and Note (NCBI
+# description:(InterPro|IPR|name)) on the gene line; assembly order.
+# Replaces agat_sp_manage_functional_annotation.pl, which cannot parse NCBI
+# FASTA headers and wrote "product=hypothetical protein" for every gene.
+rule functional_gff:
     input:
-        gff=f"agat_outputs/{species_name}.gff",
-        ncbi_hits=f"mmseqs_output/{species_name}_ncbi_best_hit.out",
-        ncbi_fasta=ncbi_data_file,
+        gff=f"inputs/{config['final_filtering_gff']}",
+        tsv="functional_outputs/functional_annotation.tsv",
         iprs=f"iprscan_output/{species_name}.iprscan.tsv"
     output:
-        gff=f"functional_outputs/{species_name}.functional.gff",
-        hits=f"functional_outputs/{species_name}.ncbi_hits.fasta"
+        f"functional_outputs/{species_name}.functional.gff3"
     params:
         volume_name=volume_name,
-        outdir=f"functional_outputs/agat_{species_name}"
+        version=config.get("annotation_version", "v3"),
+        source=config.get("gff_source", "IWGC_v3"),
+        tools=config.get("functional_tools", "InterProScan 5.77-108.0, MultiLoc2, MMseqs2"),
+        geneid=(f"--geneid-map {config['ncbi_geneid_map']}" if config.get("ncbi_geneid_map") else "")
     shell:
         """
-        python3 {params.volume_name}/scripts/extract_hits.py {input.ncbi_hits} {input.ncbi_fasta} > {output.hits}
-        # AGAT does not accept the 15th (pathways) column of the InterProScan TSV
-        cut -f1-14 {input.iprs} > iprscan_output/{species_name}.iprscan.nopathways.tsv
-        rm -rf {params.outdir}
-        singularity exec -B {params.volume_name}:{params.volume_name} {params.volume_name}/images/agat.sif \
-          agat_sp_manage_functional_annotation.pl -f {params.volume_name}/{input.gff} \
-            -b {params.volume_name}/{input.ncbi_hits} --db {params.volume_name}/{output.hits} \
-            -i {params.volume_name}/iprscan_output/{species_name}.iprscan.nopathways.tsv \
-            -o {params.volume_name}/{params.outdir} > functional_outputs/agat_{species_name}.log 2>&1
-        cp {params.outdir}/*.gff {output.gff}
+        python3 {params.volume_name}/scripts/iwgc_functional_gff.py --gff {input.gff} --tsv {input.tsv} \
+            --iprscan {input.iprs} --species {species_name} --version {params.version} \
+            --source {params.source} --tools "{params.tools}" {params.geneid} > {output}
         """

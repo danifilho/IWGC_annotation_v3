@@ -46,6 +46,7 @@ Every entry below is an error that actually happened while building and running 
 - [#18 `Could not create symlink of /tmp/...` in rule `mmseqs2`](#18-could-not-create-symlink-of-tmp-in-rule-mmseqs2)
 - [#19 NCBI database FASTA with glued headers](#19-ncbi-database-fasta-with-glued-headers)
 - [#20 AGAT functional GFF rejects the InterProScan TSV](#20-agat-functional-gff-rejects-the-interproscan-tsv)
+- [#27 AGAT functional GFF: every gene is "hypothetical protein"](#27-agat-functional-gff-every-gene-is-hypothetical-protein)
 - [#21 InterProScan runs out of memory](#21-interproscan-runs-out-of-memory)
 - [#22 `Failed to solve scheduling problem with ILP solver`](#22-failed-to-solve-scheduling-problem-with-ilp-solver)
 - [#23 `Directory cannot be locked`](#23-directory-cannot-be-locked)
@@ -254,17 +255,17 @@ singularity exec -B $PWD:/data images/mmseqs2.sif bash -c "cd /data && mmseqs ea
 
 ### 19. NCBI database FASTA with glued headers
 
-Symptoms: AGAT or `samtools faidx` cannot find subjects, or a "protein" contains a header in its sequence.
+Symptoms: tools such as AGAT or `samtools faidx` cannot find subjects, or a "protein" contains a header in its sequence.
 
 **Cause.** In `GenomesDatabase.v1.prot`, some headers are glued to the end of the previous sequence line (no newline before `>`), and the first header has no `>`.
 
-**Fix (handled).** `scripts/extract_hits.py` repairs both problems on the fly while extracting only the best-hit subjects for AGAT, so the 3 GB database never has to be rewritten.
+**Fix.** The current pipeline no longer reads this FASTA directly: MMseqs2 searches the indexed DB, and descriptions come from the merged TSV. If you need the sequences, repair the headers first, e.g. by inserting a newline before every `>` that is not at the start of a line, and add the missing `>` on line 1.
 
 ### 20. AGAT functional GFF rejects the InterProScan TSV
 
 **Cause.** `--pathways` adds a 15th column that `agat_sp_manage_functional_annotation.pl` does not accept.
 
-**Fix (handled).** The `agat_functional_gff` rule passes `cut -f1-14` of the InterProScan TSV.
+**Fix.** Pass `cut -f1-14` of the InterProScan TSV. This only matters if you run AGAT's functional script yourself; the pipeline no longer uses it (see #27).
 
 ### 21. InterProScan runs out of memory
 
@@ -300,6 +301,20 @@ Symptom: after editing a script, the config or the Snakefile, a rerun starts aga
   ```
 - Always check what will run with `snakemake -n --rerun-triggers mtime` first.
 - Keep a copy of `braker_outputs/` and of the trained species before experimenting.
+
+### 27. AGAT functional GFF: every gene is "hypothetical protein"
+
+Symptom: in a GFF made with `agat_sp_manage_functional_annotation.pl -b <ncbi best hits> --db <NCBI FASTA>`, every mRNA has `product=hypothetical protein`, and the AGAT log repeats:
+```
+Use of uninitialized value $desc in pattern match (m//) at .../agat_sp_manage_functional_annotation.pl line 259.
+```
+
+**Cause.** AGAT takes product names from **UniProt-style** headers (`>sp|P12345|NAME_SPECIES Description OS=... GN=...`). The NCBI headers (`>XP_020175095.1 description [species]`) do not match, so AGAT falls back to "hypothetical protein" for all genes. This silently affected the MAKER v2 functional GFF too (57,163 of 57,163 genes).
+
+**Fix (handled).** The `functional_gff` rule (`iwgc_functional_gff.py`) writes the functional GFF3 in the IWGC release layout straight from the merged TSV and InterProScan, without AGAT. Check the result with:
+```bash
+grep -P "\tgene\t" <SP>.functional.gff3 | grep -c "Note=Unknown Protein"   # should be a minority
+```
 
 ### 24. Fewer proteins in the functional TSV than genes in the GFF
 

@@ -3,14 +3,14 @@
 Structural and functional genome annotation for the **International Weed Genomics Consortium (IWGC)**, built with Snakemake and Singularity on SLURM clusters (developed on MSU ICER HPCC).
 
 - **Structural annotation:** repeat soft-masking, then **BRAKER3** with protein evidence plus **PacBio Iso-Seq** long reads, then a clean GFF3 with IWGC gene IDs, protein/CDS FASTA and BUSCO.
-- **Functional annotation:** MMseqs2 (NCBI, UniRef50, herbicide-resistance set), InterProScan, Pfam, SignalP/TargetP and MultiLoc2. The results are merged into one TSV and a functional GFF.
+- **Functional annotation:** MMseqs2 (NCBI, UniRef50, herbicide-resistance set), InterProScan, Pfam, SignalP/TargetP and MultiLoc2. The results are merged into one TSV and an **IWGC-format functional GFF3** (same layout as the IWGC v1 releases, e.g. `SalTr_v01.0.gff`).
 
 v3 replaces MAKER (v2, [IWGC_Structural](https://github.com/danifilho/IWGC_Structural)) with BRAKER3. On *Phalaris minor* (4.9 Gb, allotetraploid) it reaches the same BUSCO completeness as MAKER (**95.9 % vs 96.1 %**) in **~11 h instead of ~5 days**. The functional module is [IWGC_Funcional](https://github.com/danifilho/IWGC_Funcional) plus bug fixes and two new output steps.
 
 > **Validation (2026-10-22)**
 >
 > - **Structural `Snakefile`:** tested end-to-end on a single chromosome (Chr07B, 216 Mb). It ran with no errors in 3 h (48 CPUs), with BRAKER3 in ETP mode and AUGUSTUS accuracy 0.71. The individual steps also ran on the full 4.9 Gb genome (results below).
-> - **Functional `Snakefile`:** completed on the full *P. minor* v3 proteome (44,960 proteins), including the new `order_tsv` and `agat_functional_gff` rules.
+> - **Functional `Snakefile`:** completed on the full *P. minor* v3 proteome (44,960 proteins), including the new `order_tsv` and `functional_gff` rules.
 
 ---
 
@@ -48,7 +48,7 @@ FUNCTIONAL  (functional/Snakefile)                                            �
                                                        ├─► InterProScan (chunks) ─► MultiLoc2
                                                        ├─► HMMER / Pfam
                                                        └─► SignalP + TargetP
-                         ─► functional_annotation.tsv (assembly order) + <SP>.functional.gff (AGAT)
+                         ─► functional_annotation.tsv (assembly order) + <SP>.functional.gff3 (IWGC layout)
 ```
 
 Step-by-step details, with the result of every step on *P. minor*:
@@ -77,7 +77,7 @@ IWGC_annotation_v3/
 │   └── scripts/
 │       ├── functional_merge.py   # merges all results into the TSV
 │       ├── ml2_one_by_one.sh     # MultiLoc2 driver
-│       └── extract_hits.py       # NCBI hit subset for AGAT (repairs glued FASTA headers)
+│       └── iwgc_functional_gff.py  # IWGC-format functional GFF3 (Dbxref/Ontology_term/Note on genes)
 ├── docs/
 │   ├── STRUCTURAL.md             # every structural step + P. minor results
 │   ├── FUNCTIONAL.md             # every functional step + P. minor results
@@ -135,7 +135,7 @@ Source: [library://danifilho/functional_annotation_images](https://cloud.sylabs.
 
 | File in `images/` | Pull command | Tools inside (verified versions) |
 |---|---|---|
-| `agat.sif` | `singularity pull -U agat.sif library://danifilho/functional_annotation_images/agat:latest` | AGAT 1.4.0 |
+| `agat.sif` | `singularity pull -U agat.sif library://danifilho/functional_annotation_images/agat:latest` | AGAT 1.4.0 (longest isoform only) |
 | `gffread.sif` | `singularity pull -U gffread.sif library://danifilho/functional_annotation_images/gffread:latest` | gffread 0.12.7 |
 | `mmseqs2.sif` | `singularity pull -U mmseqs2.sif library://danifilho/functional_annotation_images/mmseqs2:latest` | MMseqs2 (commit `ad5837b3444728411e6c90f8c6ba9370f665c443`) |
 | `iprscan.sif` | `singularity pull -U iprscan.sif library://danifilho/functional_annotation_images/iprscan:latest` | InterProScan 5.77-108.0 |
@@ -170,7 +170,7 @@ singularity exec images/busco.sif busco --download poales_odb10    # creates bus
 
 | Path | Content | Used by |
 |---|---|---|
-| `current/GenomesDatabase.v1.prot` | IWGC NCBI protein set (5.99 M proteins, FASTA + MMseqs index) | MMseqs2 `ncbi`: descriptions and AGAT product names |
+| `current/GenomesDatabase.v1.prot` | IWGC NCBI protein set (5.99 M proteins, FASTA + MMseqs index) | MMseqs2 `ncbi`: descriptions in the TSV and in the GFF3 `Note` |
 | `herb_res_prots/total_KO_labeled.fasta` | herbicide-resistance KO protein set | MMseqs2 `herbres` |
 | `mmseqs_db/uniref50` | UniRef50 MMseqs2 database (`mmseqs databases UniRef50 ...`) | MMseqs2 `uniref` |
 | `Pfam-A.hmm` (+ `hmmpress` files) | Pfam-A HMMs | `hmmscan` |
@@ -240,6 +240,9 @@ cp -r IWGC_annotation_v3/functional functional
 | `species_name` | output prefix |
 | `mmseqs_databases` | list of `{name, path}`; the `ncbi` entry is required and also needs `ncbidata` (FASTA with descriptions) |
 | `multiloc_script` | `ml2_one_by_one.sh` (do not change) |
+| `annotation_version`, `gff_source` | release tag and column-2 source of the functional GFF3 (`v3`, `IWGC_v3`) |
+| `functional_tools` | text of the `##Tool` header line |
+| `ncbi_geneid_map` | optional `protein<TAB>GeneID` table for the `Dbxref` GeneID field (e.g. from NCBI `gene2refseq`) |
 
 ---
 
@@ -309,7 +312,25 @@ PhaMiChr01Cg000010-mRNA-1:cds       CDS
 |---|---|
 | `functional_annotation.tsv` | **one row per protein, in assembly order** (see the columns below) |
 | `functional_annotation.alphabetical.tsv` | same content, alphabetical order |
-| `<SP>.functional.gff` | longest-isoform GFF with NCBI product names and InterPro/GO/Pfam terms (AGAT) |
+| `<SP>.functional.gff3` | **IWGC-format functional GFF3** (see below) |
+
+IWGC functional GFF3 layout (one example gene; functional data on the **gene** line, children keep only `ID`/`Parent`):
+
+```
+##gff-version 3
+##Generated using iwgc_functional_gff.py, PhaMi_v3, 2026-10-22 11:51:00
+##Project Name : PhaMi
+##Job Name  : IWGC Annotation Pipeline
+##Tool      : InterProScan 5.77-108.0, MultiLoc2, MMseqs2
+Chr01C IWGC_v3 gene 1482104 1484206 . - . ID=PhaMiChr01Cg000020;Name=PhaMiChr01Cg000020;Dbxref=XP_003577295.1:NA:802.0;Ontology_term=GO:0005507%2CGO:0016491;Note=laccase-15 [Brachypodium distachyon]:(InterPro|IPR045087|Multicopper oxidase)
+Chr01C IWGC_v3 mRNA 1482104 1484206 . - . ID=PhaMiChr01Cg000020-mRNA-1;Parent=PhaMiChr01Cg000020
+```
+
+| Attribute | Content |
+|---|---|
+| `Dbxref` | `<NCBI best hit>:<GeneID>:<bitscore>`. The GeneID needs `ncbi_geneid_map`; without it, the LOC number from the description is used when present, otherwise `NA`. |
+| `Ontology_term` | InterProScan GO terms, comma-encoded (`%2C`) |
+| `Note` | `<NCBI description>:(<db>|<accession>|<name>)`, using the lowest-e-value InterPro entry (or a member-database signature when no InterPro entry exists). Genes without an NCBI hit get `Unknown Protein`. |
 
 TSV columns:
 - `ID sequence`
@@ -327,7 +348,7 @@ Intermediate outputs of every step are listed in [docs/FUNCTIONAL.md](docs/FUNCT
 Files in [`results/PhaMi/`](results/PhaMi/):
 - [`PhaMi.v3.gff3.gz`](results/PhaMi/structural/PhaMi.v3.gff3.gz): the structural GFF3.
 - [`PhaMi.v3.functional_annotation.tsv.gz`](results/PhaMi/functional/PhaMi.v3.functional_annotation.tsv.gz): the functional table.
-- [`PhaMi.v3.functional.gff.gz`](results/PhaMi/functional/PhaMi.v3.functional.gff.gz): the functional GFF.
+- [`PhaMi.v3.functional.gff3.gz`](results/PhaMi/functional/PhaMi.v3.functional.gff3.gz): the functional GFF3 (IWGC layout).
 
 | | **v3 (this pipeline)** | MAKER v2 |
 |---|---|---|
@@ -359,14 +380,14 @@ Before v3, BRAKER had been run on this genome in protein-only mode with 15 per-c
 **Functional (vs. IWGC_Funcional)**
 - **Bug fix:** the parallel MMseqs2 searches shared `/tmp` and raced on MMseqs' `latest` symlink, which **silently dropped the NCBI search**. Each database now has its own tmp directory.
 - **New rule `order_tsv`:** the TSV is written in assembly order, taken from the input GFF3 (AGAT sorts sequence names alphabetically, so its order cannot be used). An alphabetical copy is kept.
-- **New rule `agat_functional_gff`:** functional GFF via AGAT, with `extract_hits.py` repairing the glued headers of the NCBI FASTA on the fly.
+- **New rule `functional_gff`** (`iwgc_functional_gff.py`): writes the functional GFF3 in the **IWGC release layout**, the same layout as the IWGC v1 files such as `SalTr_v01.0.gff` (the GeneID field is `NA` unless a GeneID map is given). It replaces the earlier AGAT step (`agat_sp_manage_functional_annotation.pl`), which cannot parse NCBI FASTA headers and wrote `product=hypothetical protein` for **every** gene. This affected the MAKER v2 functional GFF as well; see [TROUBLESHOOTING #27](docs/TROUBLESHOOTING.md#27-agat-functional-gff-every-gene-is-hypothetical-protein).
 - The duplicate `configfile:` line was removed, and `egrep \>` became `grep '^>'` (it raised a Python `SyntaxWarning`).
 
 ---
 
 ## 12. Troubleshooting
 
-[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) lists every error met while running this pipeline: the message, the cause and the fix. It covers 25 entries, including container paths, file quotas, BRAKER modes, BUSCO 0 %, the MMseqs `/tmp` race, AGAT and InterProScan.
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) lists every error met while running this pipeline: the message, the cause and the fix. It covers 27 entries, including container paths, file quotas, BRAKER modes, BUSCO 0 %, the MMseqs `/tmp` race, AGAT and InterProScan.
 
 ---
 

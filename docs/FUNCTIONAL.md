@@ -10,7 +10,7 @@ Snakefile: [`functional/Snakefile`](../functional/Snakefile) · config: [`functi
             └─► sigtarp (SignalP 5 + TargetP 2) ────────────────────────────────────────┤
                                                                                          ▼
                          generate_tsv (functional_merge.py) ─► order_tsv ─► functional_annotation.tsv
-   agat GFF + ncbi best hits + InterProScan ─► agat_functional_gff ─► <SP>.functional.gff
+   input GFF3 + functional TSV + InterProScan ─► functional_gff ─► <SP>.functional.gff3 (IWGC layout)
 ```
 
 Each section gives what the step does, the tool, its outputs, and the result on ***Phalaris minor* v3** (input: 44,965 genes / 49,216 mRNAs). All numbers below come from the completed *P. minor* v3 run.
@@ -88,17 +88,41 @@ Columns: `ID sequence`, `NCBI DESCRIPTION`, `NCBI Subject;E-value;Bit`, `herbres
 | InterProScan IPR | 39,362 (87.5 %) | 42,301 (89.1 %) |
 
 Notes on these columns:
-- The `Hmmer Pfam` column is filled for every protein in both versions: `functional_merge.py` records the hmmscan hits without an e-value cut, so use InterPro or the Pfam terms in the functional GFF for strict domain calls.
+- The `Hmmer Pfam` column is filled for every protein in both versions: `functional_merge.py` records the hmmscan hits without an e-value cut, so use the InterPro column for strict domain calls.
 - Many NCBI subjects are gene-model IDs from the GenomesDatabase without a text description, which is why only about 38 % of proteins have a description.
 
-## 9. `agat_functional_gff`: functional GFF
+## 9. `functional_gff`: IWGC-format functional GFF3
 
-1. `extract_hits.py` writes the NCBI subjects of the best hits, repairing the glued headers of the NCBI FASTA on the fly.
-2. `agat_sp_manage_functional_annotation.pl` adds product names (from the NCBI hits) and InterPro / GO / Pfam / PANTHER / … terms (from InterProScan without the pathways column) to the longest-isoform GFF → `functional_outputs/<SP>.functional.gff`.
+`scripts/iwgc_functional_gff.py` writes the release GFF3 in the **same layout as the IWGC v1 annotations** (e.g. `Weed_lab/SalTr_v01.0.gff`):
+- It reads the input structural GFF3 (assembly order, every feature kept), `functional_annotation.tsv` and the InterProScan TSV.
+- Each **gene** gets:
+  - `Dbxref=<NCBI hit>:<GeneID>:<bitscore>`
+  - `Ontology_term=<GO list>`
+  - `Note=<NCBI description>:(<db>|<accession>|<name>)`, or `Note=Unknown Protein` when there is no NCBI hit. tRNA genes and models dropped by `gffread -J` therefore show `Unknown Protein`, as in the v1 releases.
+- mRNA, exon, CDS, UTR and tRNA lines keep only `ID` and `Parent`.
+- Column 2 is set to `gff_source` (e.g. `IWGC_v3`), and the header records the species, version and tools.
 
-The per-database term lists are written to `functional_outputs/agat_<SP>/` (`GO.txt`, `Pfam.txt`, `InterPro.txt`, …), together with AGAT's `report.txt`.
+The original IWGC v1 pipeline ([PattersonWeedLab/IWGC_annotation_pipeline](https://github.com/PattersonWeedLab/IWGC_annotation_pipeline)) does not publish the script that wrote these files, so the layout was reproduced from `SalTr_v01.0.gff` itself.
 
-***P. minor*:** 11,470 NCBI subjects extracted (all found), and `PhaMi.functional.gff` written in about 3 min. AGAT prints `Use of uninitialized value $desc` for database headers without a description; this is harmless. AGAT's report: [`results/PhaMi/functional/agat_report.txt`](../results/PhaMi/functional/agat_report.txt).
+**GeneID.** In the v1 files, the middle `Dbxref` field is the NCBI GeneID; the v1 NCBI set was built with NCBI Datasets, which carry GeneIDs. The current GenomesDatabase FASTA has no GeneIDs, so the field is filled as follows:
+- from the optional `ncbi_geneid_map`, if one is given;
+- otherwise from a `LOC<number>` in the description, when present;
+- otherwise `NA`.
+
+On *P. minor*, 26,230 of the 43,528 NCBI best hits are IWGC gene models (`AA…` IDs) that have no NCBI GeneID at all.
+
+***P. minor* (runtime ~6 s):**
+
+| | v3 (BRAKER3) | v2 (MAKER) |
+|---|---|---|
+| Genes | 44,965 | 57,163 (incl. 2,039 tRNA) |
+| With NCBI hit (`Dbxref`) | 43,528 (96.8 %) | 46,202 (80.8 %; tRNA and partial models have none) |
+| `Note=Unknown Protein` | 1,437 | 10,961 |
+| With GO (`Ontology_term`) | 31,545 | 33,046 |
+| `Note` with an InterProScan match | 42,682 | 45,595 |
+| `Dbxref` with GeneID (from LOC numbers) | 4,135 | 3,979 |
+
+> This step replaces `agat_sp_manage_functional_annotation.pl`. AGAT expects UniProt-style FASTA headers and could not read the NCBI descriptions, so every gene came out as `product=hypothetical protein`, in v2 and v3 alike. See [TROUBLESHOOTING #27](TROUBLESHOOTING.md#27-agat-functional-gff-every-gene-is-hypothetical-protein).
 
 ---
 
@@ -112,5 +136,5 @@ The per-database term lists are written to `functional_outputs/agat_<SP>/` (`GO.
 | SignalP + TargetP | ~1.7 h (starts after HMMER; in parallel with InterProScan) |
 | InterProScan | ~34 h (bottleneck) |
 | MultiLoc2 | ~9.5 h (after InterProScan) |
-| merge + order + AGAT functional GFF | ~5 min |
+| merge + order + functional GFF3 | ~2 min |
 | **Total** | **~44 h** wall-clock (2026-10-20 12:59 → 10-22 08:24, plus the ~5 min finishing run) |
