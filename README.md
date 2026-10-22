@@ -77,7 +77,8 @@ IWGC_annotation_v3/
 │   └── scripts/
 │       ├── functional_merge.py   # merges all results into the TSV
 │       ├── ml2_one_by_one.sh     # MultiLoc2 driver
-│       └── iwgc_functional_gff.py  # IWGC-format functional GFF3 (Dbxref/Ontology_term/Note on genes)
+│       ├── iwgc_functional_gff.py  # IWGC-format functional GFF3 (Dbxref/Ontology_term/Note on genes)
+│       └── make_geneid_map.sh      # NCBI gene2refseq -> protein/GeneID table for Dbxref
 ├── docs/
 │   ├── STRUCTURAL.md             # every structural step + P. minor results
 │   ├── FUNCTIONAL.md             # every functional step + P. minor results
@@ -322,13 +323,13 @@ IWGC functional GFF3 layout (one example gene; functional data on the **gene** l
 ##Project Name : PhaMi
 ##Job Name  : IWGC Annotation Pipeline
 ##Tool      : InterProScan 5.77-108.0, MultiLoc2, MMseqs2
-Chr01C IWGC_v3 gene 1482104 1484206 . - . ID=PhaMiChr01Cg000020;Name=PhaMiChr01Cg000020;Dbxref=XP_003577295.1:NA:802.0;Ontology_term=GO:0005507%2CGO:0016491;Note=laccase-15 [Brachypodium distachyon]:(InterPro|IPR045087|Multicopper oxidase)
+Chr01C IWGC_v3 gene 1482104 1484206 . - . ID=PhaMiChr01Cg000020;Name=PhaMiChr01Cg000020;Dbxref=XP_003577295.1:100842279:802.0;Ontology_term=GO:0005507%2CGO:0016491;Note=laccase-15 [Brachypodium distachyon]:(InterPro|IPR045087|Multicopper oxidase)
 Chr01C IWGC_v3 mRNA 1482104 1484206 . - . ID=PhaMiChr01Cg000020-mRNA-1;Parent=PhaMiChr01Cg000020
 ```
 
 | Attribute | Content |
 |---|---|
-| `Dbxref` | `<NCBI best hit>:<GeneID>:<bitscore>`. The GeneID needs `ncbi_geneid_map`; without it, the LOC number from the description is used when present, otherwise `NA`. |
+| `Dbxref` | `<NCBI best hit>:<GeneID>:<bitscore>`. The GeneID comes from `ncbi_geneid_map` (built with `scripts/make_geneid_map.sh` from NCBI gene2refseq); without it, the LOC number from the description is used when present, otherwise `NA`. IWGC gene-model hits (`AA…`) never have a GeneID. |
 | `Ontology_term` | InterProScan GO terms, comma-encoded (`%2C`) |
 | `Note` | `<NCBI description>:(<db>|<accession>|<name>)`, using the lowest-e-value InterPro entry (or a member-database signature when no InterPro entry exists). Genes without an NCBI hit get `Unknown Protein`. |
 
@@ -380,7 +381,7 @@ Before v3, BRAKER had been run on this genome in protein-only mode with 15 per-c
 **Functional (vs. IWGC_Funcional)**
 - **Bug fix:** the parallel MMseqs2 searches shared `/tmp` and raced on MMseqs' `latest` symlink, which **silently dropped the NCBI search**. Each database now has its own tmp directory.
 - **New rule `order_tsv`:** the TSV is written in assembly order, taken from the input GFF3 (AGAT sorts sequence names alphabetically, so its order cannot be used). An alphabetical copy is kept.
-- **New rule `functional_gff`** (`iwgc_functional_gff.py`): writes the functional GFF3 in the **IWGC release layout**, the same layout as the IWGC v1 files such as `SalTr_v01.0.gff` (the GeneID field is `NA` unless a GeneID map is given). It replaces the earlier AGAT step (`agat_sp_manage_functional_annotation.pl`), which cannot parse NCBI FASTA headers and wrote `product=hypothetical protein` for **every** gene. This affected the MAKER v2 functional GFF as well; see [TROUBLESHOOTING #27](docs/TROUBLESHOOTING.md#27-agat-functional-gff-every-gene-is-hypothetical-protein).
+- **New rule `functional_gff`** (`iwgc_functional_gff.py`): writes the functional GFF3 in the **IWGC release layout**, the same layout as the IWGC v1 files such as `SalTr_v01.0.gff` (GeneIDs from NCBI gene2refseq via `make_geneid_map.sh`). It replaces the earlier AGAT step (`agat_sp_manage_functional_annotation.pl`), which cannot parse NCBI FASTA headers and wrote `product=hypothetical protein` for **every** gene. This affected the MAKER v2 functional GFF as well; see [TROUBLESHOOTING #27](docs/TROUBLESHOOTING.md#27-agat-functional-gff-every-gene-is-hypothetical-protein).
 - The duplicate `configfile:` line was removed, and `egrep \>` became `grep '^>'` (it raised a Python `SyntaxWarning`).
 
 ---

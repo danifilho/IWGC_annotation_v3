@@ -104,12 +104,14 @@ Notes on these columns:
 
 The original IWGC v1 pipeline ([PattersonWeedLab/IWGC_annotation_pipeline](https://github.com/PattersonWeedLab/IWGC_annotation_pipeline)) does not publish the script that wrote these files, so the layout was reproduced from `SalTr_v01.0.gff` itself.
 
-**GeneID.** In the v1 files, the middle `Dbxref` field is the NCBI GeneID; the v1 NCBI set was built with NCBI Datasets, which carry GeneIDs. The current GenomesDatabase FASTA has no GeneIDs, so the field is filled as follows:
-- from the optional `ncbi_geneid_map`, if one is given;
-- otherwise from a `LOC<number>` in the description, when present;
-- otherwise `NA`.
-
-On *P. minor*, 26,230 of the 43,528 NCBI best hits are IWGC gene models (`AA…` IDs) that have no NCBI GeneID at all.
+**GeneID.** In the v1 files, the middle `Dbxref` field is the NCBI GeneID; the v1 NCBI set was built with NCBI Datasets, which carry GeneIDs. The current GenomesDatabase FASTA has no GeneIDs, so `scripts/make_geneid_map.sh` builds them. It downloads NCBI `gene2refseq` (~2.4 GB), keeps only the best-hit accessions and deletes the download:
+```bash
+bash scripts/make_geneid_map.sh inputs/ncbi_protein2geneid.tsv mmseqs_output/<SP>_ncbi_best_hit.out
+# then set  ncbi_geneid_map: inputs/ncbi_protein2geneid.tsv  in config.yaml
+```
+Without a map, the script falls back to the `LOC<number>` in the description when there is one, and otherwise writes `NA`. Two kinds of hits never get a GeneID:
+- **IWGC gene models** (`AA…` IDs), which are part of the GenomesDatabase but not NCBI records;
+- **retired accession versions** (e.g. `.1` after NCBI moved to `.2`).
 
 ***P. minor* (runtime ~6 s):**
 
@@ -120,7 +122,8 @@ On *P. minor*, 26,230 of the 43,528 NCBI best hits are IWGC gene models (`AA…`
 | `Note=Unknown Protein` | 1,437 | 10,961 |
 | With GO (`Ontology_term`) | 31,545 | 33,046 |
 | `Note` with an InterProScan match | 42,682 | 45,595 |
-| `Dbxref` with GeneID (from LOC numbers) | 4,135 | 3,979 |
+| `Dbxref` with GeneID (gene2refseq, 2026-10-22) | 16,751 | 17,415 |
+| `Dbxref` GeneID = `NA`: IWGC models / retired XP versions | 26,230 / 547 | – |
 
 > This step replaces `agat_sp_manage_functional_annotation.pl`. AGAT expects UniProt-style FASTA headers and could not read the NCBI descriptions, so every gene came out as `product=hypothetical protein`, in v2 and v3 alike. See [TROUBLESHOOTING #27](TROUBLESHOOTING.md#27-agat-functional-gff-every-gene-is-hypothetical-protein).
 

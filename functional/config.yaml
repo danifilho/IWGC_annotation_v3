@@ -39,7 +39,7 @@ annotation_version: v3
 gff_source: IWGC_v3
 # Written to the "##Tool" header line
 functional_tools: "InterProScan 5.77-108.0, MultiLoc2, MMseqs2"
-# Optional 2-column table (NCBI protein accession <TAB> GeneID), e.g. built
-# from NCBI gene2refseq, for the GeneID field of Dbxref. Without it, the LOC
+# Optional 2-column table (NCBI protein accession <TAB> GeneID) for the GeneID
+# field of Dbxref; build it with scripts/make_geneid_map.sh (NCBI gene2refseq). Without it, the LOC
 # number in the NCBI description is used when present, otherwise "NA".
 ncbi_geneid_map: ""
