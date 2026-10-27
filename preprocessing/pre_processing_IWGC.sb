@@ -1,0 +1,28 @@
+#!/bin/bash --login
+#SBATCH --job-name=preprocessing
+#SBATCH --partition=general-long
+#SBATCH --time=1-00:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=80
+#SBATCH --mem=32G
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
+# IWGC pre-processing before the structural pipeline (predictor: braker4):
+# RNA-seq trimming. Edit the variables and submit from the directory that
+# should hold the outputs.
+# trim uses JOBS x THREADS CPUs (keep it <= --cpus-per-task).
+set -euo pipefail
+cd "$SLURM_SUBMIT_DIR"
+source ~/miniforge3/etc/profile.d/conda.sh
+conda activate iwgc
+
+SCRIPT=/path/to/IWGC_annotation_v3/preprocessing/pre_processing_IWGC.py
+IMAGES=/path/to/images                  # fastqc.sif fastp.sif multiqc.sif
+SP=MySp
+
+# RNA-seq: FastQC -> fastp -> FastQC -> MultiQC  (output: rnaseq/trimmed/<lib>_R1/_R2.fq.gz)
+python3 $SCRIPT trim --images $IMAGES --name $SP \
+    --reads-dir /path/to/illumina_data --r1 '{lib}_R1.fastq.gz' --r2 '{lib}_R2.fastq.gz' \
+    --adapter CTGTCTCTTATACACATCT --out rnaseq --jobs 5 --threads 16
+

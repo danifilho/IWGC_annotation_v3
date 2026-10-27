@@ -1,9 +1,14 @@
 ############################################################################
-# IWGC structural annotation v3: soft-masking -> BRAKER3 (proteins + Iso-Seq)
+# IWGC structural annotation v3: EDTA soft-masking -> BRAKER3 or BRAKER4
 # -> lab-format GFF3 -> proteins/CDS -> BUSCO
+# Trimmed RNA-seq for BRAKER4 comes from preprocessing/pre_processing_IWGC.py trim.
 #
-# Run from volume_name:
+# predictor: braker3  proteins (+ Iso-Seq), one braker.pl run on one node:
 #   snakemake --cores 64 --use-singularity --singularity-args "-B <volume_name>"
+#   (run_structural.sb)
+# predictor: braker4  proteins + trimmed Illumina RNA-seq (HISAT2 inside
+#   BRAKER4). Every rule is a SLURM job and the BRAKER4 workflow submits its
+#   own jobs (run_structural_braker4.sb).
 ############################################################################
 import os
 
@@ -11,17 +16,44 @@ configfile: "config.yaml"
 
 V        = config["volume_name"].rstrip("/")
 SP       = config["species_abbreviation"]
+PREDICTOR = config.get("predictor", "braker3")
 GENOME   = f"inputs/{config['fasta_file']}"
-GENOME_BASE = os.path.splitext(os.path.basename(config["fasta_file"]))[0]
+GENOME_NAME = os.path.basename(config["fasta_file"])
+PREMASKED = config.get("softmasked_genome", "") or ""
+TE_GFF   = config.get("te_annotation_gff", "") or ""
 READS    = config.get("isoseq_reads", "") or ""
 USE_ISO  = READS != ""
-PREMASKED = config.get("softmasked_genome", "") or ""
+B4_RESULTS = (config.get("braker4_results", "") or "").rstrip("/")
+
+if PREDICTOR not in ("braker3", "braker4"):
+    raise ValueError(f"predictor must be braker3 or braker4, not {PREDICTOR!r}")
+if PREDICTOR == "braker4" and USE_ISO:
+    raise ValueError("isoseq_reads is only wired for predictor: braker3")
+
+# Paths outside volume_name (symlink targets) must be listed in extra_binds;
+# explicit `singularity exec` calls use the same binds.
+BINDS = " ".join(f"-B {p}" for p in [V] + (config.get("extra_binds") or []))
 
 # BRAKER3 with long reads needs the dedicated ":isoseq" container
 # (GeneMark-ETP fork with long-read StringTie); protein-only uses ":latest".
+# finalize_gff3 only needs its python3.
 BRAKER_SIF = "images/braker3_isoseq.sif" if USE_ISO else "images/braker3.sif"
 
-MASKED = f"inputs/{PREMASKED}" if PREMASKED else f"masking_outputs/{GENOME_BASE}.softmask.fasta"
+MASKED = f"inputs/{PREMASKED}" if PREMASKED else f"masking_outputs/{GENOME_NAME}.softmask.fasta"
+
+# Trimmed Illumina pairs (BRAKER4 only; pre_processing_IWGC.py trim): {lib} is
+# filled from rnaseq_libraries, or found by matching rnaseq_r1 in rnaseq_dir.
+# BRAKER4 reads them itself, so rnaseq_dir may be anywhere on the cluster.
+RNA_DIR = (config.get("rnaseq_dir", "") or "").rstrip("/")
+RNA_R1  = f"{RNA_DIR}/{config.get('rnaseq_r1', '{lib}_R1.fq.gz')}"
+RNA_R2  = f"{RNA_DIR}/{config.get('rnaseq_r2', '{lib}_R2.fq.gz')}"
+LIBS = sorted(config.get("rnaseq_libraries") or (glob_wildcards(RNA_R1).lib if RNA_DIR else []))
+if PREDICTOR == "braker4" and not B4_RESULTS and not LIBS:
+    raise ValueError("predictor: braker4 needs RNA-seq libraries (rnaseq_dir / rnaseq_libraries)")
+
+# BRAKER writes a log (braker3) or a training summary (braker4) with the
+# AUGUSTUS accuracy; gene_set_stats.sh reports it.
+BRAKER_LOG = "braker_outputs/braker.log" if PREDICTOR == "braker3" else "braker_outputs/quality_control/training_summary.txt"
 
 
 rule all:
@@ -36,49 +68,66 @@ rule all:
 
 
 # ------------------------------------------------------------------ masking
-# Same masking as the IWGC v2 structural pipeline (RepeatModeler -> RepeatMasker
-# -> bedtools soft-mask). Skipped when config["softmasked_genome"] is set.
-rule repeatmodeler:
-    input:
-        GENOME
-    output:
-        f"repeat_modeler_outputs/{GENOME_BASE}-families.fa"
-    threads: config["repeatmodeler_threads"]
-    singularity:
-        "images/dfam_tetools.sif"
-    shell:
-        """
-        cd {V}/repeat_modeler_outputs
-        BuildDatabase -name {GENOME_BASE} {V}/{input}
-        RepeatModeler -database {GENOME_BASE} -threads {threads} -LTRStruct
-        """
-
-rule repeatmasker:
+# EDTA (structure-based LTR/TIR/Helitron discovery + RepeatMasker with the EDTA
+# library) -> bedtools soft-mask with the whole-genome TE annotation.
+# te_annotation_gff = an EDTA run done elsewhere: only bedtools runs.
+# softmasked_genome = an already soft-masked genome: both are skipped.
+rule edta:
+    # EDTA writes <genome file name>.mod.EDTA.* into its working directory.
+    # images/EDTA.sif needs GNU grep/sed/gawk: the plain biocontainers image
+    # (busybox grep) breaks EDTA.
     input:
         genome=GENOME,
-        lib=rules.repeatmodeler.output
+        cds=f"inputs/{config['edta_cds']}" if config.get("edta_cds") else []
     output:
-        f"repeat_masker_outputs/{os.path.basename(config['fasta_file'])}.out.gff"
-    threads: config["repeatmasker_threads"]
+        gff=f"edta_outputs/{GENOME_NAME}.mod.EDTA.TEanno.gff3",
+        lib=f"edta_outputs/{GENOME_NAME}.mod.EDTA.TElib.fa",
+        summary=f"edta_outputs/{GENOME_NAME}.mod.EDTA.TEanno.sum"
+    threads: config.get("edta_threads", 8)
+    params:
+        species=config.get("edta_species", "others"),
+        cds=lambda wc, input: f"--cds {V}/{input.cds}" if input.cds else "",
+        sensitive=config.get("edta_sensitive", 0),
+        extra=config.get("edta_extra", "") or ""
     singularity:
-        "images/dfam_tetools.sif"
+        "images/EDTA.sif"
+    log:
+        "logs/edta.log"
     shell:
-        "RepeatMasker -gff -a -pa {threads} -lib {V}/{input.lib} {V}/{input.genome} -dir {V}/repeat_masker_outputs"
+        """
+        mkdir -p {V}/edta_outputs {V}/logs
+        cd {V}/edta_outputs
+        # --anno 1: whole-genome TE annotation (TEanno.gff3); --evaluate 0: the
+        # consistency check is slow and does not change the annotation
+        EDTA.pl --genome {V}/{input.genome} --species {params.species} --step all {params.cds} \
+            --anno 1 --evaluate 0 --sensitive {params.sensitive} --overwrite 1 \
+            --threads {threads} {params.extra} > {V}/{log} 2>&1
+        grep -E "total TE:|masked:" {V}/{log} || true
+        """
 
 rule softmask:
     input:
         genome=GENOME,
-        gff=rules.repeatmasker.output
+        gff=f"inputs/{TE_GFF}" if TE_GFF else rules.edta.output.gff
     output:
-        f"masking_outputs/{GENOME_BASE}.softmask.fasta"
+        f"masking_outputs/{GENOME_NAME}.softmask.fasta"
     singularity:
         "images/bedtools.sif"
     shell:
         """
+        # EDTA may shorten sequence names longer than 15 characters in its .mod
+        # genome: every TE GFF sequence must be a sequence of the genome
+        awk '/^>/{{ print substr($1, 2) }}' {V}/{input.genome} | sort -u > {V}/{output}.names
+        awk -F'\\t' '!/^#/ && NF >= 9 {{ print $1 }}' {V}/{input.gff} | sort -u | comm -23 - {V}/{output}.names > {V}/{output}.unknown
+        if [ -s {V}/{output}.unknown ]; then
+          echo "ERROR: TE GFF sequences not in the genome: $(head -3 {V}/{output}.unknown | tr '\\n' ' ')"; exit 1
+        fi
+        rm {V}/{output}.names {V}/{output}.unknown
         bedtools maskfasta -fi {V}/{input.genome} -bed {V}/{input.gff} -soft -fo {V}/{output}
         awk '!/^>/{{n+=length($0); m+=gsub(/[acgtn]/,"&")}} END{{printf "soft-masked: %d / %d bp (%.1f%%)\\n", m, n, 100*m/n}}' {V}/{output}
         """
 
+# ------------------------------------------------------------------ genome
 rule faidx_masked:
     input:
         MASKED
@@ -113,7 +162,7 @@ rule isoseq_fasta:
     shell:
         """
         case "{input}" in
-          *.bam) singularity exec -B {V} {V}/images/samtools.sif samtools fasta -@ 4 {V}/{input} | gzip -1 > {V}/{output} ;;
+          *.bam) singularity exec {BINDS} {V}/images/samtools.sif samtools fasta -@ 4 {V}/{input} | gzip -1 > {V}/{output} ;;
           *.gz)  ln -sf {V}/{input} {V}/{output} ;;
           *)     gzip -1c {V}/{input} > {V}/{output} ;;
         esac
@@ -133,14 +182,14 @@ rule minimap2:
     shell:
         """
         mkdir -p {V}/tmp
-        singularity exec -B {V} {V}/images/minimap2.sif \
+        singularity exec {BINDS} {V}/images/minimap2.sif \
             minimap2 -t {threads} -I {params.batch} -ax splice:hq -uf {V}/{input.genome} {V}/{input.reads} \
-          | singularity exec -B {V} {V}/images/samtools.sif \
+          | singularity exec {BINDS} {V}/images/samtools.sif \
             samtools sort -@ 8 -m 2G -T {V}/tmp/isosort -o {V}/{output.bam} -
         # .bai only supports sequences < 2^29 bp (~537 Mb); fall back to .csi
-        singularity exec -B {V} {V}/images/samtools.sif samtools index {V}/{output.bam} \
-          || singularity exec -B {V} {V}/images/samtools.sif samtools index -c {V}/{output.bam}
-        singularity exec -B {V} {V}/images/samtools.sif samtools flagstat {V}/{output.bam} > {V}/braker_inputs/isoseq.flagstat.txt
+        singularity exec {BINDS} {V}/images/samtools.sif samtools index {V}/{output.bam} \
+          || singularity exec {BINDS} {V}/images/samtools.sif samtools index -c {V}/{output.bam}
+        singularity exec {BINDS} {V}/images/samtools.sif samtools flagstat {V}/{output.bam} > {V}/braker_inputs/isoseq.flagstat.txt
         """
 
 
@@ -154,43 +203,113 @@ rule augustus_config:
     shell:
         "cp -r /opt/Augustus/config {V}/{output}"
 
-rule braker:
-    # ONE genome-wide run: one GeneMark + one AUGUSTUS model for the whole genome.
-    input:
-        genome=MASKED,
-        proteins=rules.protein_db.output,
-        bam=rules.minimap2.output.bam if USE_ISO else [],
-        augustus=rules.augustus_config.output
-    output:
-        gtf="braker_outputs/braker.gtf",
-        aa="braker_outputs/braker.aa"
-    threads: config["braker_threads"]
-    params:
-        species=config["braker_species"],
-        bam_opt=lambda wc, input: f"--bam={V}/{input.bam}" if USE_ISO else ""
-    log:
-        "logs/braker.log"
-    shell:
-        """
-        # BRAKER cannot resume, and a half-trained species blocks a rerun
-        rm -rf {V}/braker_outputs {V}/{input.augustus}/species/{params.species}
-        mkdir -p {V}/braker_outputs {V}/logs {V}/tmp
-        # GeneMark writes ~2 files per genome chunk (~357k files on a 4.9 Gb
-        # masked genome, per GeneMark run). Clean finished chunks in the background.
-        bash {V}/scripts/genemark_cleanup.sh {V}/braker_outputs > {V}/logs/genemark_cleanup.log 2>&1 &
-        CLEAN=$!
-        singularity exec -B {V} --env TMPDIR={V}/tmp {V}/{BRAKER_SIF} braker.pl \
-            --genome={V}/{input.genome} \
-            --prot_seq={V}/{input.proteins} \
-            {params.bam_opt} \
-            --species={params.species} \
-            --workingdir={V}/braker_outputs \
-            --AUGUSTUS_CONFIG_PATH={V}/{input.augustus} \
-            --threads={threads} \
-            --gff3 > {V}/{log} 2>&1
-        kill $CLEAN 2>/dev/null || true
-        grep -iE "will be executed in|accuracy after" {V}/braker_outputs/braker.log || true
-        """
+if PREDICTOR == "braker3":
+    rule braker:
+        # ONE genome-wide run: one GeneMark + one AUGUSTUS model for the whole genome.
+        input:
+            genome=MASKED,
+            proteins=rules.protein_db.output,
+            bam=rules.minimap2.output.bam if USE_ISO else [],
+            augustus=rules.augustus_config.output
+        output:
+            gtf="braker_outputs/braker.gtf",
+            aa="braker_outputs/braker.aa"
+        threads: config["braker_threads"]
+        params:
+            species=config["braker_species"],
+            bam_opt=lambda wc, input: f"--bam={V}/{input.bam}" if USE_ISO else ""
+        log:
+            "logs/braker.log"
+        shell:
+            """
+            # BRAKER cannot resume, and a half-trained species blocks a rerun
+            rm -rf {V}/braker_outputs {V}/{input.augustus}/species/{params.species}
+            mkdir -p {V}/braker_outputs {V}/logs {V}/tmp
+            # GeneMark writes ~2 files per genome chunk (~357k files on a 4.9 Gb
+            # masked genome, per GeneMark run). Clean finished chunks in the background.
+            bash {V}/scripts/genemark_cleanup.sh {V}/braker_outputs > {V}/logs/genemark_cleanup.log 2>&1 &
+            CLEAN=$!
+            singularity exec {BINDS} --env TMPDIR={V}/tmp {V}/{BRAKER_SIF} braker.pl \
+                --genome={V}/{input.genome} \
+                --prot_seq={V}/{input.proteins} \
+                {params.bam_opt} \
+                --species={params.species} \
+                --workingdir={V}/braker_outputs \
+                --AUGUSTUS_CONFIG_PATH={V}/{input.augustus} \
+                --threads={threads} \
+                --gff3 > {V}/{log} 2>&1
+            kill $CLEAN 2>/dev/null || true
+            grep -iE "will be executed in|accuracy after" {V}/braker_outputs/braker.log || true
+            """
+
+elif B4_RESULTS:
+    localrules: braker
+    rule braker:
+        # Use a BRAKER4 run that already finished (braker4_results =
+        # its output/<sample>/results directory) instead of running it again.
+        output:
+            gtf="braker_outputs/braker.gtf",
+            aa="braker_outputs/braker.aa"
+        shell:
+            """
+            mkdir -p {V}/braker_outputs
+            for f in braker.gtf braker.aa; do
+              if [ -s {B4_RESULTS}/$f.gz ]; then gunzip -c {B4_RESULTS}/$f.gz > {V}/braker_outputs/$f
+              else cp {B4_RESULTS}/$f {V}/braker_outputs/$f; fi
+            done
+            cp -r {B4_RESULTS}/quality_control {B4_RESULTS}/software_versions.tsv {V}/braker_outputs/
+            echo "imported from {B4_RESULTS}" > {V}/braker_outputs/SOURCE.txt
+            """
+
+else:
+    localrules: braker
+    rule braker:
+        # BRAKER4 is its own Snakemake workflow (one container per tool): this
+        # rule writes its samples.csv + config.ini and runs it in braker4_run/,
+        # where it submits its own SLURM jobs (braker4_profile). It runs on the
+        # orchestrator node and resumes where it stopped when rerun.
+        input:
+            genome=MASKED,
+            proteins=rules.protein_db.output,
+            r1=expand(RNA_R1, lib=LIBS),
+            r2=expand(RNA_R2, lib=LIBS)
+        output:
+            gtf="braker_outputs/braker.gtf",
+            aa="braker_outputs/braker.aa"
+        params:
+            b4=config.get("braker4_dir", ""),
+            env=config.get("braker4_env", ""),
+            profile=config.get("braker4_profile", ""),
+            jobs=config.get("braker4_jobs", 2),
+            extra=config.get("braker4_extra_args", "") or "",
+            lineage=os.path.basename(config["busco_lineage"].rstrip("/")),
+            # cpus_per_task follows braker_threads; braker4_config overrides the rest
+            settings=" ".join([f"SLURM_ARGS.cpus_per_task={config['braker_threads']}"] +
+                              [f"{s}.{k}={v}" for s, kv in (config.get("braker4_config") or {}).items()
+                               for k, v in kv.items()]),
+            r1=lambda wc, input: " ".join(os.path.abspath(f) for f in input.r1),
+            r2=lambda wc, input: " ".join(os.path.abspath(f) for f in input.r2)
+        log:
+            "logs/braker4.log"
+        shell:
+            """
+            mkdir -p {V}/braker4_run {V}/braker_outputs {V}/logs
+            python3 {V}/scripts/braker4_setup.py --outdir {V}/braker4_run --sample {SP} \
+                --genome {V}/{input.genome} --proteins {V}/{input.proteins} \
+                --busco-lineage {params.lineage} --template {params.b4}/config.ini.example \
+                --r1 {params.r1} --r2 {params.r2} --set {params.settings}
+            # puts BRAKER4's Snakemake (8.x + SLURM plugin) first on PATH
+            source {params.env}
+            cd {V}/braker4_run
+            BRAKER4_CONFIG={V}/braker4_run/config.ini snakemake -s {params.b4}/Snakefile \
+                --workflow-profile {params.profile} \
+                --jobs {params.jobs} --max-threads {config[braker_threads]} \
+                {params.extra} > {V}/{log} 2>&1
+            R={V}/braker4_run/output/{SP}/results
+            gunzip -c $R/braker.gtf.gz > {V}/{output.gtf}
+            gunzip -c $R/braker.aa.gz > {V}/{output.aa}
+            cp -r $R/quality_control $R/software_versions.tsv {V}/braker_outputs/
+            """
 
 
 # ------------------------------------------------------------------ release
@@ -206,7 +325,8 @@ rule finalize_gff3:
         gff=f"final_outputs/{SP}.v3.gff3",
         excluded=f"final_outputs/{SP}.v3.excluded_internal_stop.txt"
     params:
-        drop=config.get("drop_internal_stop_models", True)
+        drop=config.get("drop_internal_stop_models", True),
+        source=PREDICTOR.upper()
     singularity:
         BRAKER_SIF
     shell:
@@ -218,7 +338,7 @@ rule finalize_gff3:
           : > {V}/{output.excluded}
         fi
         echo "transcripts excluded (internal stop): $(wc -l < {V}/{output.excluded})"
-        python3 {V}/scripts/finalize_gff3.py {V}/{input.gtf} {V}/{input.fai} {SP} {V}/{output.excluded} > {V}/{output.gff}
+        python3 {V}/scripts/finalize_gff3.py {V}/{input.gtf} {V}/{input.fai} {SP} {V}/{output.excluded} {params.source} > {V}/{output.gff}
         """
 
 rule extract_sequences:
@@ -232,11 +352,11 @@ rule extract_sequences:
         stats=f"final_outputs/{SP}.v3.stats.txt"
     shell:
         """
-        singularity exec -B {V} {V}/images/gffread.sif \
+        singularity exec {BINDS} {V}/images/gffread.sif \
             gffread {V}/{input.gff} -g {V}/{input.genome} -S -x {V}/{output.cds} -y {V}/{output.prot}.raw
         bash {V}/scripts/postprocess_proteins.sh {V}/{output.prot}.raw {V}/{output.prot} {V}/{output.longest}
         rm {V}/{output.prot}.raw
-        bash {V}/scripts/gene_set_stats.sh {V}/{input.gff} {V}/{output.prot} {V}/{output.cds} {V}/braker_outputs/braker.log > {V}/{output.stats}
+        bash {V}/scripts/gene_set_stats.sh {V}/{input.gff} {V}/{output.prot} {V}/{output.cds} {V}/{BRAKER_LOG} > {V}/{output.stats}
         """
 
 rule busco:
@@ -249,7 +369,7 @@ rule busco:
         lineage=config["busco_lineage"],
         maxlen=config["busco_max_protein_length"]
     singularity:
-        "images/busco.sif"
+        config.get("busco_image", "images/busco.sif")
     shell:
         """
         cd {V}/busco_outputs

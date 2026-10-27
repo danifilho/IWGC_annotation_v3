@@ -1,8 +1,9 @@
 ############################################################################
-# IWGC structural annotation v3 (BRAKER3 + Iso-Seq) — configuration
+# IWGC structural annotation v3 (EDTA + BRAKER3 or BRAKER4) — configuration
 # All paths below are RELATIVE to volume_name unless they start with "/".
 # Every input must be a real file inside volume_name (not a symlink that
-# points outside it): containers only see the bound volume.
+# points outside it), unless its directory is listed in extra_binds:
+# containers only see the bound volume plus extra_binds.
 ############################################################################
 
 # Absolute path of the working directory (contains Snakefile, config.yaml,
@@ -12,14 +13,34 @@ volume_name: /mnt/gs21/scratch/USER/IWGC_annotation_v3/structural
 # Species code: prefix of every gene ID (PhaMiChr01Cg000010) and of output files
 species_abbreviation: PhaMi
 
+# Gene predictor:
+#   braker3  proteins (+ Iso-Seq reads), one braker.pl run (run_structural.sb)
+#   braker4  proteins + trimmed Illumina RNA-seq, BRAKER4 Snakemake workflow on SLURM
+#            (run_structural_braker4.sb); see the BRAKER4 section below
+predictor: braker3
+
+# Extra host directories bound into every container, e.g. where symlinks in
+# inputs/ point to. Also passed by run_structural_braker4.sb.
+extra_binds: []
+
 # ---------------------------------------------------------------- genome
 # Unmasked genome FASTA in inputs/. Simple headers only (no spaces).
 fasta_file: genome.fasta
 
-# Optional: an already soft-masked genome in inputs/. When set, RepeatModeler,
-# RepeatMasker and bedtools are skipped and this file is used directly.
-# Leave empty ("") to run the masking steps.
+# Masking: EDTA -> bedtools soft-mask with its TEanno.gff3. Two shortcuts:
+# te_annotation_gff  an EDTA *.mod.EDTA.TEanno.gff3 already made for this
+#                    genome, in inputs/: EDTA is skipped, only bedtools runs
+# softmasked_genome  an already soft-masked genome in inputs/: no masking
+te_annotation_gff: ""
 softmasked_genome: ""
+
+# EDTA options (same as Weed_lab/projects/Run_EDTA): --species others|Rice|Maize,
+# --cds = CDS FASTA of the species or a close relative in inputs/ (lowers false
+# positives; "" = none), --sensitive 1 adds RepeatModeler (3-5x slower).
+edta_species: others
+edta_cds: ""
+edta_sensitive: 0
+edta_extra: ""
 
 # ---------------------------------------------------------------- evidence
 # Protein FASTA files in inputs/, concatenated into one BRAKER protein DB.
@@ -34,24 +55,54 @@ protein_files:
 # .fastq/.fq (optionally .gz). Leave empty ("") for protein-only BRAKER (EP mode).
 isoseq_reads: sample.flnc.bam
 
+# TRIMMED Illumina paired-end RNA-seq (predictor: braker4 only), e.g. the
+# trimmed/ folder of preprocessing/pre_processing_IWGC.py trim. Absolute path
+# allowed (BRAKER4 binds the cluster file systems itself). {lib} is taken from
+# rnaseq_libraries, or (empty list) from every file matching rnaseq_r1.
+# BRAKER4 names each library after its R1 file without "_R1".
+rnaseq_dir: ""
+rnaseq_r1: "{lib}_R1.fq.gz"
+rnaseq_r2: "{lib}_R2.fq.gz"
+rnaseq_libraries: []
+
 # ---------------------------------------------------------------- resources
-repeatmodeler_threads: 64
-repeatmasker_threads: 64
+edta_threads: 8                # A. palmeri (384 Mb): ~16 h, 21 GB RAM on 8 threads
 minimap2_threads: 32
 minimap2_index_batch: 16G      # -I: must exceed genome size so it is indexed in one batch
 braker_threads: 48             # BRAKER warns GeneMark may die above 48
+                               # (BRAKER4: CPUs per SLURM job, --max-threads)
 busco_threads: 16
 
 # ---------------------------------------------------------------- BRAKER
-# AUGUSTUS species name for the trained model (must not exist yet)
+# AUGUSTUS species name for the trained model (must not exist yet; braker3)
 braker_species: PhaMi_v3
 
 # Drop gene models whose BRAKER protein contains an internal stop codon
 # (a few GeneMark.hmm3 predictions do). Done before ID numbering.
 drop_internal_stop_models: true
 
+# ---------------------------------------------------------------- BRAKER4
+# Clone of https://github.com/Gaius-Augustus/BRAKER4, a script that puts its
+# Snakemake 8.18 + snakemake-executor-plugin-slurm first on PATH, and its
+# SLURM workflow profile. BRAKER4 submits up to braker4_jobs jobs at a time.
+braker4_dir: ""
+braker4_env: ""
+braker4_profile: ""
+braker4_jobs: 2
+braker4_extra_args: "--set-resources hisat2_align:mem_mb=32000"
+# Overrides for BRAKER4's config.ini, by section (cpus_per_task = braker_threads)
+braker4_config:
+  SLURM_ARGS:
+    mem_of_node: 180000
+    max_runtime: 10080
+# Use a finished BRAKER4 run instead of running it: its output/<sample>/results
+# directory (absolute path; only copied on the host, so no extra_binds needed)
+braker4_results: ""
+
 # ---------------------------------------------------------------- QC
 # Local BUSCO lineage directory (compute nodes usually have no internet)
 busco_lineage: busco_downloads/lineages/poales_odb10
+# BUSCO container; *_odb12 lineages need BUSCO 6 (ezlabgva/busco:v6.1.0_cv2)
+busco_image: images/busco.sif
 # Proteins longer than this are excluded from BUSCO (hmmsearch aborts > 100k aa)
 busco_max_protein_length: 10000

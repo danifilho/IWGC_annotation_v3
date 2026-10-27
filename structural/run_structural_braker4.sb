@@ -1,0 +1,31 @@
+#!/bin/bash --login
+#SBATCH --job-name=structural_b4
+#SBATCH --partition=general-long
+#SBATCH --time=7-00:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=8G
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
+# IWGC structural annotation v3 with predictor: braker4. This job only
+# orchestrates: every rule is submitted as its own SLURM job (profiles/slurm);
+# the braker rule runs here and BRAKER4 submits its own jobs (braker4_profile).
+# Submit from the working directory (volume_name).
+set -euo pipefail
+WD="$SLURM_SUBMIT_DIR"
+cd "$WD"
+
+source ~/miniforge3/etc/profile.d/conda.sh
+conda activate iwgc
+export PATH="$HOME/miniforge3/bin:$PATH"
+export TMPDIR=$WD/tmp APPTAINER_CACHEDIR=$WD/tmp SINGULARITY_CACHEDIR=$WD/tmp
+mkdir -p "$TMPDIR"
+
+# same binds as the explicit `singularity exec` calls: volume_name + extra_binds
+BINDS=$(python3 -c 'import yaml; c = yaml.safe_load(open("config.yaml")); print(" ".join("-B " + p for p in [c["volume_name"]] + (c.get("extra_binds") or [])))')
+
+echo "Host: $(hostname)  Start: $(date)  snakemake: $(snakemake --version)  binds: $BINDS"
+snakemake --unlock || true
+snakemake --workflow-profile profiles/slurm --use-singularity --singularity-args "$BINDS"
+echo "End: $(date)"

@@ -1,0 +1,21 @@
+# SLURM profile for run_structural_braker4.sb (Snakemake 9 +
+# snakemake-executor-plugin-slurm): every rule except braker is its own SLURM
+# job, with threads as --cpus-per-task. Adjust account/partition to your cluster.
+executor: slurm
+jobs: 10
+latency-wait: 120
+rerun-triggers: mtime
+keep-going: true
+rerun-incomplete: true
+printshellcmds: true
+default-resources:
+  slurm_account: general
+  slurm_partition: general-long
+  runtime: 1440
+  mem_mb: 16000
+set-resources:
+  busco:
+    mem_mb: 64000
+  edta:
+    runtime: 4320
+    mem_mb: 46000

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Summary statistics and sanity checks for the final gene set.
-# Usage: gene_set_stats.sh final.gff3 proteins.fa cds.fa braker.log
+# Usage: gene_set_stats.sh final.gff3 proteins.fa cds.fa braker.log|training_summary.txt
 GFF="$1"; PROT="$2"; CDS="$3"; LOG="$4"
 
 echo "genes: $(awk -F'\t' '$3=="gene"' "$GFF" | wc -l)"
@@ -19,4 +19,7 @@ awk -F'\t' '$3=="gene" { c[$1]++; if (!($1 in o)) o[$1]=++k } END { for (s in c)
 if [ -s "$LOG" ]; then
   echo "BRAKER:"
   grep -E "will be executed in|The accuracy after" "$LOG" | sed -E 's/^# .*[0-9]{4}: ?/  /'
+  # BRAKER4 quality_control/training_summary.txt
+  awk '/^Accuracy After Optimization/ { f = 1; print "  AUGUSTUS accuracy after optimization:"; next }
+       /^Accuracy|^Final/ { f = 0 }  f && NF { print "  " $0 }' "$LOG"
 fi
