@@ -52,7 +52,8 @@ protein_files:
 
 # Iso-Seq / PacBio long reads in inputs/: FLNC or HiFi READS (not collapsed
 # transcripts). Accepted: .bam (e.g. isoseq refine *.flnc.bam), .fasta/.fa,
-# .fastq/.fq (optionally .gz). Leave empty ("") for protein-only BRAKER (EP mode).
+# .fastq/.fq (optionally .gz). Leave empty ("") for protein-only BRAKER3 (EP
+# mode) or Illumina-only BRAKER4 (ETP). braker4 + RNA-seq + Iso-Seq = dual mode.
 isoseq_reads: sample.flnc.bam
 
 # TRIMMED Illumina paired-end RNA-seq (predictor: braker4 only), e.g. the

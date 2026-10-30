@@ -5,7 +5,7 @@ Structural and functional genome annotation for the **International Weed Genomic
 | Module | What it does | Main outputs |
 |---|---|---|
 | **Pre-processing** (`pre_processing_IWGC.py`, BRAKER4 only) | trim Illumina RNA-seq: FastQC → fastp → FastQC → MultiQC | trimmed read pairs, QC reports |
-| **Structural** | **EDTA** TE annotation → bedtools soft-mask → **BRAKER3** with proteins + **PacBio Iso-Seq** reads, or **BRAKER4** with proteins + trimmed **Illumina RNA-seq** → GFF3 with IWGC gene IDs → BUSCO | `<SP>.v3.gff3`, proteins, CDS, BUSCO |
+| **Structural** | **EDTA** TE annotation → bedtools soft-mask → **BRAKER3** with proteins + **PacBio Iso-Seq** reads, or **BRAKER4** with proteins + trimmed **Illumina RNA-seq** (+ optional Iso-Seq, dual mode) → GFF3 with IWGC gene IDs → BUSCO | `<SP>.v3.gff3`, proteins, CDS, BUSCO |
 | **Functional** | MMseqs2 (NCBI, UniRef50, herbicide resistance), InterProScan, Pfam, SignalP/TargetP, MultiLoc2 | `functional_annotation.tsv`, IWGC-format `<SP>.functional.gff3` |
 
 On *Phalaris minor* (4.9 Gb, allotetraploid), BRAKER3 reached the same BUSCO completeness as the earlier MAKER pipeline (**95.9 % vs 96.1 %**) in **~11 h instead of ~5 days**.
@@ -29,7 +29,7 @@ On *Phalaris minor* (4.9 Gb, allotetraploid), BRAKER3 reached the same BUSCO com
   - genome FASTA (simple headers, no spaces), plus optionally CDS of the species or a close relative for EDTA;
   - proteins of a close relative **and** OrthoDB Viridiplantae;
   - BRAKER3: PacBio Iso-Seq **reads** (FLNC `.bam`, or FASTA/FASTQ), not collapsed transcripts;
-  - BRAKER4: the **trimmed** Illumina pairs from pre-processing, and a [BRAKER4](https://github.com/Gaius-Augustus/BRAKER4) clone with its Snakemake 8.18 environment and SLURM profile;
+  - BRAKER4: the **trimmed** Illumina pairs from pre-processing (optionally also Iso-Seq FLNC reads: dual mode), and a [BRAKER4](https://github.com/Gaius-Augustus/BRAKER4) clone with its Snakemake 8.18 environment and SLURM profile;
   - a local BUSCO lineage.
 - **Functional databases:** the IWGC NCBI protein set (`GenomesDatabase.v1`), UniRef50 (MMseqs2), the herbicide-resistance KO set, Pfam-A and InterProScan data 5.77-108.0.
 
@@ -112,7 +112,7 @@ For **BRAKER4 with Illumina RNA-seq** instead, also set:
 
 ```yaml
 predictor: braker4
-isoseq_reads: ""
+isoseq_reads: ""                              # or sample.flnc.bam: Illumina + Iso-Seq = BRAKER4 dual mode
 rnaseq_dir: /path/to/rnaseq/trimmed           # from pre_processing_IWGC.py trim
 rnaseq_r1: "{lib}_R1.fq.gz"                   # {lib} = library name
 rnaseq_r2: "{lib}_R2.fq.gz"

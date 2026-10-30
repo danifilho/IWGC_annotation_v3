@@ -7,8 +7,8 @@
 #   snakemake --cores 64 --use-singularity --singularity-args "-B <volume_name>"
 #   (run_structural.sb)
 # predictor: braker4  proteins + trimmed Illumina RNA-seq (HISAT2 inside
-#   BRAKER4). Every rule is a SLURM job and the BRAKER4 workflow submits its
-#   own jobs (run_structural_braker4.sb).
+#   BRAKER4), + Iso-Seq reads for BRAKER4's dual mode. Every rule is a SLURM
+#   job and the BRAKER4 workflow submits its own jobs (run_structural_braker4.sb).
 ############################################################################
 import os
 
@@ -27,8 +27,6 @@ B4_RESULTS = (config.get("braker4_results", "") or "").rstrip("/")
 
 if PREDICTOR not in ("braker3", "braker4"):
     raise ValueError(f"predictor must be braker3 or braker4, not {PREDICTOR!r}")
-if PREDICTOR == "braker4" and USE_ISO:
-    raise ValueError("isoseq_reads is only wired for predictor: braker3")
 
 # Paths outside volume_name (symlink targets) must be listed in extra_binds;
 # explicit `singularity exec` calls use the same binds.
@@ -37,7 +35,7 @@ BINDS = " ".join(f"-B {p}" for p in [V] + (config.get("extra_binds") or []))
 # BRAKER3 with long reads needs the dedicated ":isoseq" container
 # (GeneMark-ETP fork with long-read StringTie); protein-only uses ":latest".
 # finalize_gff3 only needs its python3.
-BRAKER_SIF = "images/braker3_isoseq.sif" if USE_ISO else "images/braker3.sif"
+BRAKER_SIF = "images/braker3_isoseq.sif" if USE_ISO and PREDICTOR == "braker3" else "images/braker3.sif"
 
 MASKED = f"inputs/{PREMASKED}" if PREMASKED else f"masking_outputs/{GENOME_NAME}.softmask.fasta"
 
@@ -155,10 +153,11 @@ rule protein_db:
 rule isoseq_fasta:
     # minimap2 reads FASTA/FASTQ (also .gz) directly; a PacBio BAM
     # (e.g. isoseq refine *.flnc.bam) is converted to FASTA first.
+    # BRAKER4 aligns it itself and resumes from it, so it is kept there.
     input:
         f"inputs/{READS}" if USE_ISO else []
     output:
-        temp("braker_inputs/isoseq_reads.fa.gz")
+        temp("braker_inputs/isoseq_reads.fa.gz") if PREDICTOR == "braker3" else "braker_inputs/isoseq_reads.fa.gz"
     shell:
         """
         case "{input}" in
@@ -272,7 +271,8 @@ else:
             genome=MASKED,
             proteins=rules.protein_db.output,
             r1=expand(RNA_R1, lib=LIBS),
-            r2=expand(RNA_R2, lib=LIBS)
+            r2=expand(RNA_R2, lib=LIBS),
+            isoseq=rules.isoseq_fasta.output if USE_ISO else []
         output:
             gtf="braker_outputs/braker.gtf",
             aa="braker_outputs/braker.aa"
@@ -288,7 +288,9 @@ else:
                               [f"{s}.{k}={v}" for s, kv in (config.get("braker4_config") or {}).items()
                                for k, v in kv.items()]),
             r1=lambda wc, input: " ".join(os.path.abspath(f) for f in input.r1),
-            r2=lambda wc, input: " ".join(os.path.abspath(f) for f in input.r2)
+            r2=lambda wc, input: " ".join(os.path.abspath(f) for f in input.r2),
+            # Iso-Seq + Illumina + proteins = BRAKER4 dual mode
+            isoseq=lambda wc, input: f"--isoseq {V}/{input.isoseq}" if USE_ISO else ""
         log:
             "logs/braker4.log"
         shell:
@@ -297,12 +299,14 @@ else:
             python3 {V}/scripts/braker4_setup.py --outdir {V}/braker4_run --sample {SP} \
                 --genome {V}/{input.genome} --proteins {V}/{input.proteins} \
                 --busco-lineage {params.lineage} --template {params.b4}/config.ini.example \
-                --r1 {params.r1} --r2 {params.r2} --set {params.settings}
+                --r1 {params.r1} --r2 {params.r2} {params.isoseq} --set {params.settings}
             # puts BRAKER4's Snakemake (8.x + SLURM plugin) first on PATH
             source {params.env}
             cd {V}/braker4_run
+            # greedy: with the ILP scheduler (picked when cbc is on PATH, e.g. from
+            # this env) BRAKER4's Snakemake imports stopit, which needs pkg_resources
             BRAKER4_CONFIG={V}/braker4_run/config.ini snakemake -s {params.b4}/Snakefile \
-                --workflow-profile {params.profile} \
+                --workflow-profile {params.profile} --scheduler greedy \
                 --jobs {params.jobs} --max-threads {config[braker_threads]} \
                 {params.extra} > {V}/{log} 2>&1
             R={V}/braker4_run/output/{SP}/results
