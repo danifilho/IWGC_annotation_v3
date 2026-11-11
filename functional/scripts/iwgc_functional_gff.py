@@ -10,7 +10,9 @@ Functional information goes on the GENE line:
        NCBI description of the best hit, then the best InterProScan match
        (an InterPro entry if any; otherwise a member-database signature)
   Genes without an NCBI hit: Note=Unknown Protein (Dbxref omitted).
-Child features keep only ID and Parent; every feature gets SOURCE in column 2.
+Child features keep only ID and Parent; every feature gets SOURCE in column 2,
+except features predicted by Helixer (column 2 "Helixer" in the structural GFF3:
+genes added from Helixer, and UTRs taken from Helixer), which keep "Helixer".
 Feature order is the order of the input GFF3 (assembly order).
 
 GeneID: the NCBI protein FASTA used by the pipeline has no GeneIDs. Give
@@ -153,7 +155,7 @@ def main():
             f = line.rstrip('\n').split('\t')
             if len(f) != 9:
                 continue
-            f[1] = a.source
+            f[1] = 'Helixer' if f[1] == 'Helixer' else a.source
             at = parse_attrs(f[8])
             if f[2] == 'gene':
                 n['gene'] += 1

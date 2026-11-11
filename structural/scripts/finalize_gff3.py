@@ -21,6 +21,8 @@ a few). They are removed BEFORE numbering, so gene IDs stay contiguous; genes
 left without transcripts disappear.
 
 Optional SOURCE: column-2 label (default BRAKER3; BRAKER4 for the BRAKER4 predictor).
+Genes from Helixer (column 2 "Helixer" in the GTF, added by helixer_merge.py)
+keep the label Helixer.
 
 Usage: finalize_gff3.py braker.gtf genome.fa.fai ORG [EXCLUDE] [SOURCE] > final.gff3
 """
@@ -33,7 +35,8 @@ def main(gtf, fai, org, exclude=None, source='BRAKER3'):
         skip = {l.split()[0] for l in open(exclude) if l.strip()}
     order = [l.split('\t')[0] for l in open(fai) if l.strip()]
     rank = {c: i for i, c in enumerate(order)}
-    tx = defaultdict(lambda: {'cds': [], 'stop': [], 'frame': {}, 'seq': None, 'strand': None, 'gene': None})
+    tx = defaultdict(lambda: {'cds': [], 'stop': [], 'frame': {}, 'seq': None, 'strand': None, 'gene': None,
+                              'src': None})
     for line in open(gtf):
         if line.startswith('#'):
             continue
@@ -46,6 +49,7 @@ def main(gtf, fai, org, exclude=None, source='BRAKER3'):
         g = re.search(r'gene_id "([^"]+)"', f[8]).group(1)
         r = tx[t]
         r['seq'], r['strand'], r['gene'] = f[0], f[6], g
+        r['src'] = 'Helixer' if f[1] == 'Helixer' else source
         iv = (int(f[3]), int(f[4]))
         (r['cds'] if f[2] == 'CDS' else r['stop']).append(iv)
         if f[2] == 'CDS':
@@ -59,7 +63,7 @@ def main(gtf, fai, org, exclude=None, source='BRAKER3'):
         cds = sorted(set(r['cds']))
         # 5' CDS frame, before the stop codon is folded into the 3' segment
         r['phase5'] = r['frame'][cds[0] if r['strand'] == '+' else cds[-1]]
-        for s, e in r['stop']:
+        for s, e in sorted(r['stop'], reverse=r['strand'] == '-'):
             if any(a <= s and e <= b for a, b in cds):
                 continue
             # extend the terminal CDS segment that abuts the stop codon
@@ -67,6 +71,11 @@ def main(gtf, fai, org, exclude=None, source='BRAKER3'):
                 cds[-1] = (cds[-1][0], e); n_fold += 1
             elif r['strand'] == '-' and cds[0][0] - 1 == e:
                 cds[0] = (s, cds[0][1]); n_fold += 1
+            # stop codon (or the part of a split one) after an intron: its own CDS segment
+            elif r['strand'] == '+' and s > cds[-1][1]:
+                cds.append((s, e))
+            elif r['strand'] == '-' and e < cds[0][0]:
+                cds.insert(0, (s, e))
             else:
                 sys.stderr.write(f"WARNING: stop codon of {t} not adjacent to CDS, left out\n")
         r['cds'] = cds
@@ -87,23 +96,24 @@ def main(gtf, fai, org, exclude=None, source='BRAKER3'):
         counter += 10
         gid = f"{org}{seq}g{counter:06d}"
         strand = txs[0][1]['strand']
-        out.write(f"{seq}\t{source}\tgene\t{start}\t{end}\t.\t{strand}\t.\tID={gid};Name={gid}\n")
+        src = txs[0][1]['src']
+        out.write(f"{seq}\t{src}\tgene\t{start}\t{end}\t.\t{strand}\t.\tID={gid};Name={gid}\n")
         txs.sort(key=lambda x: (x[1]['cds'][0][0], x[1]['cds'][-1][1], x[0]))
         for i, (old, r) in enumerate(txs, 1):
             n_tx += 1
             mid = f"{gid}-mRNA-{i}"
             cds = r['cds']
-            out.write(f"{seq}\t{source}\tmRNA\t{cds[0][0]}\t{cds[-1][1]}\t.\t{strand}\t.\t"
+            out.write(f"{seq}\t{src}\tmRNA\t{cds[0][0]}\t{cds[-1][1]}\t.\t{strand}\t.\t"
                       f"ID={mid};Name={mid};Parent={gid};braker_id={old}\n")
             # exons/CDS listed 5'->3' along the transcript; phase from cumulative length
             segs = cds if strand == '+' else cds[::-1]
             for k, (a, b) in enumerate(segs, 1):
-                out.write(f"{seq}\t{source}\texon\t{a}\t{b}\t.\t{strand}\t.\tID={mid}:{k};Parent={mid}\n")
+                out.write(f"{seq}\t{src}\texon\t{a}\t{b}\t.\t{strand}\t.\tID={mid}:{k};Parent={mid}\n")
             # start so that the first segment gets the 5' frame of the GTF
             done = (3 - r['phase5']) % 3
             for a, b in segs:
                 phase = (3 - done % 3) % 3
-                out.write(f"{seq}\t{source}\tCDS\t{a}\t{b}\t.\t{strand}\t{phase}\tID={mid}:cds;Parent={mid}\n")
+                out.write(f"{seq}\t{src}\tCDS\t{a}\t{b}\t.\t{strand}\t{phase}\tID={mid}:cds;Parent={mid}\n")
                 done += b - a + 1
     sys.stderr.write(f"genes={len(blocks)} transcripts={n_tx} stop_codons_folded_into_CDS={n_fold} "
                      f"excluded_transcripts={len(skip)}\n")

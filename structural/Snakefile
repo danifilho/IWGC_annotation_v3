@@ -1,6 +1,7 @@
 ############################################################################
 # IWGC structural annotation v3: EDTA soft-masking -> BRAKER3 or BRAKER4
-# -> lab-format GFF3 -> proteins/CDS -> BUSCO
+# (-> optional Helixer genes at loci BRAKER missed) -> lab-format GFF3
+# -> proteins/CDS -> BUSCO
 # Trimmed RNA-seq for BRAKER4 comes from preprocessing/pre_processing_IWGC.py trim.
 #
 # predictor: braker3  proteins (+ Iso-Seq), one braker.pl run on one node:
@@ -24,6 +25,12 @@ TE_GFF   = config.get("te_annotation_gff", "") or ""
 READS    = config.get("isoseq_reads", "") or ""
 USE_ISO  = READS != ""
 B4_RESULTS = (config.get("braker4_results", "") or "").rstrip("/")
+# Optional Helixer branch: its genes are added only at loci BRAKER missed
+HELIXER = str(config.get("helixer", False)).lower() in ("true", "1", "yes")  # also --config helixer=true
+HELIXER_GFF = config.get("helixer_gff", "") or ""
+HELIXER_GPU = str(config.get("helixer_gpu", True)).lower() in ("true", "1", "yes")
+# UTRs from BRAKER's transcripts (then Helixer's) added to the final GFF3
+ADD_UTRS = str(config.get("add_utrs", False)).lower() in ("true", "1", "yes")
 
 if PREDICTOR not in ("braker3", "braker4"):
     raise ValueError(f"predictor must be braker3 or braker4, not {PREDICTOR!r}")
@@ -53,6 +60,21 @@ if PREDICTOR == "braker4" and not B4_RESULTS and not LIBS:
 # AUGUSTUS accuracy; gene_set_stats.sh reports it.
 BRAKER_LOG = "braker_outputs/braker.log" if PREDICTOR == "braker3" else "braker_outputs/quality_control/training_summary.txt"
 
+# BRAKER's hints (RNA-seq, Iso-Seq, protein), which TSEBRA uses to judge the Helixer models
+if PREDICTOR == "braker3":
+    HINTS_SRC = f"{V}/braker_outputs/hintsfile.gff"
+else:
+    HINTS_SRC = f"{B4_RESULTS or V + '/braker4_run/output/' + SP + '/results'}/hintsfile.gff.gz"
+# BRAKER's UTR-decorated models (BRAKER4 always writes them; BRAKER3 only with --addUTR)
+if PREDICTOR == "braker3":
+    UTR_SRC = f"{V}/braker_outputs/braker_utr.gtf"
+else:
+    UTR_SRC = f"{B4_RESULTS or V + '/braker4_run/output/' + SP + '/results'}/braker_utr.gtf.gz"
+
+FINAL_GFF = f"final_outputs/{SP}.v3.gff3"
+# with add_utrs the CDS-only GFF3 of finalize_gff3 is an intermediate
+CDS_GFF = f"braker_outputs/{SP}.v3.cds_only.gff3" if ADD_UTRS else FINAL_GFF
+
 
 rule all:
     input:
@@ -62,7 +84,8 @@ rule all:
         f"final_outputs/{SP}.v3.longest.proteins.fa",
         f"final_outputs/{SP}.v3.stats.txt",
         f"final_outputs/{SP}.v3.excluded_internal_stop.txt",
-        f"busco_outputs/{SP}.v3.busco_summary.txt"
+        f"busco_outputs/{SP}.v3.busco_summary.txt",
+        [f"final_outputs/{SP}.v3.utr_summary.tsv"] if ADD_UTRS else []
 
 
 # ------------------------------------------------------------------ masking
@@ -316,17 +339,108 @@ else:
             """
 
 
+# ------------------------------------------------------------------ Helixer
+# helixer: true. Helixer (deep learning, no evidence; GPU) predicts genes on the
+# unmasked genome. TSEBRA, the BRAKER combiner, scores them with BRAKER's own
+# hints, keeping every BRAKER model; helixer_merge.py then adds only the
+# supported Helixer genes at loci where BRAKER has no gene.
+if HELIXER:
+    if HELIXER_GFF:
+        localrules: helixer
+        rule helixer:
+            # Helixer run elsewhere (e.g. on a GPU node): its GFF3 in inputs/
+            input:
+                f"inputs/{HELIXER_GFF}"
+            output:
+                f"helixer_outputs/{SP}.helixer.gff3"
+            shell:
+                "cp {V}/{input} {V}/{output}"
+    else:
+        rule helixer:
+            input:
+                GENOME
+            output:
+                f"helixer_outputs/{SP}.helixer.gff3"
+            threads: config.get("helixer_threads", 8)
+            resources:
+                # helixer_gpu only decides whether SLURM is asked for a GPU; ignored by a local run
+                mem_mb=config.get("helixer_mem_mb", 64000),
+                **({"slurm_partition": config.get("helixer_partition", "general-long-gpu"),
+                    "gres": "gpu:1"} if HELIXER_GPU else {})
+            params:
+                image=config.get("helixer_image", "images/helixer.sif"),
+                lineage=config.get("helixer_lineage", "land_plant"),
+                models=lambda wc: f"--downloaded-model-path {config['helixer_model_dir']}" if config.get("helixer_model_dir") else "",
+                extra=config.get("helixer_extra_args", "") or ""
+            log:
+                "logs/helixer.log"
+            shell:
+                """
+                mkdir -p {V}/helixer_outputs {V}/logs
+                # --nv is harmless without a GPU: TensorFlow then falls back to the CPU
+                singularity exec {BINDS} --nv {V}/{params.image} Helixer.py \
+                    --fasta-path {V}/{input} --lineage {params.lineage} --species {SP} \
+                    {params.models} --gff-output-path {V}/{output} {params.extra} > {V}/{log} 2>&1
+                """
+
+    localrules: braker_hints
+    rule braker_hints:
+        input:
+            rules.braker.output.gtf
+        output:
+            temp("helixer_outputs/hintsfile.gff")
+        shell:
+            """
+            mkdir -p {V}/helixer_outputs
+            case {HINTS_SRC} in
+              *.gz) gunzip -c {HINTS_SRC} > {V}/{output} ;;
+              *)    cp {HINTS_SRC} {V}/{output} ;;
+            esac
+            """
+
+    rule helixer_merge:
+        input:
+            braker=rules.braker.output.gtf,
+            helixer=rules.helixer.output,
+            hints=rules.braker_hints.output,
+            genome=GENOME
+        output:
+            gtf="helixer_outputs/braker_helixer.gtf",
+            added=f"helixer_outputs/{SP}.helixer_added.tsv"
+        params:
+            support=config.get("helixer_intron_support", 0.5)
+        log:
+            "logs/helixer_merge.log"
+        singularity:
+            BRAKER_SIF
+        shell:
+            """
+            cd {V}/helixer_outputs
+            python3 {V}/scripts/helixer2gtf.py {V}/{input.helixer} {V}/{input.genome} > helixer.gtf 2> {V}/{log}
+            # BRAKER3's TSEBRA settings, with the required fraction of supported introns
+            CFG=$(dirname $(readlink -f $(which tsebra.py)))/../config
+            [ -f $CFG/braker3.cfg ] && CFG=$CFG/braker3.cfg || CFG=$CFG/default.cfg
+            sed "s/^intron_support .*/intron_support {params.support}/" $CFG > tsebra.cfg
+            tsebra.py --keep_gtf {V}/{input.braker} --gtf helixer.gtf --hintfiles {V}/{input.hints} \
+                --cfg tsebra.cfg --filter_single_exon_genes -o tsebra.gtf >> {V}/{log} 2>&1
+            python3 {V}/scripts/helixer_merge.py {V}/{input.braker} tsebra.gtf helixer.gtf \
+                {V}/{output.gtf} {V}/{output.added} 2>> {V}/{log}
+            tail -1 {V}/{log}
+            """
+
+
 # ------------------------------------------------------------------ release
 rule finalize_gff3:
     # braker.gtf -> GFF3 with lab IDs (PhaMiChr01Cg000010, -mRNA-1, :1, :cds).
     # Models whose BRAKER protein has an internal stop (a few GeneMark.hmm3
     # predictions) are dropped before numbering when drop_internal_stop_models.
+    # With helixer: true the GTF also holds the added Helixer genes (source Helixer).
     input:
-        gtf=rules.braker.output.gtf,
+        gtf=rules.helixer_merge.output.gtf if HELIXER else rules.braker.output.gtf,
         aa=rules.braker.output.aa,
         fai=rules.faidx_masked.output
     output:
-        gff=f"final_outputs/{SP}.v3.gff3",
+        gff=CDS_GFF,
         excluded=f"final_outputs/{SP}.v3.excluded_internal_stop.txt"
     params:
         drop=config.get("drop_internal_stop_models", True),
@@ -345,9 +459,35 @@ rule finalize_gff3:
         python3 {V}/scripts/finalize_gff3.py {V}/{input.gtf} {V}/{input.fai} {SP} {V}/{output.excluded} {params.source} > {V}/{output.gff}
         """
 
+if ADD_UTRS:
+    rule add_utrs:
+        # UTRs per transcript side: BRAKER's (RNA-seq / Iso-Seq transcripts) first,
+        # else, with helixer: true, those of the Helixer model with the same CDS.
+        # Column 2 of each UTR line says where it came from (BRAKER4 or Helixer).
+        input:
+            gff=CDS_GFF,
+            helixer=rules.helixer.output if HELIXER else []
+        output:
+            gff=FINAL_GFF,
+            summary=f"final_outputs/{SP}.v3.utr_summary.tsv"
+        params:
+            helixer=lambda wc, input: f"{V}/{input.helixer}" if HELIXER else "-"
+        log:
+            "logs/add_utrs.log"
+        singularity:
+            BRAKER_SIF
+        shell:
+            """
+            UTR={UTR_SRC}
+            [ -s $UTR ] || {{ echo "no BRAKER UTR file ($UTR)"; UTR=-; }}
+            python3 {V}/scripts/add_utrs.py {V}/{input.gff} $UTR {params.helixer} {V}/{output.summary} \
+                > {V}/{output.gff} 2> {V}/{log}
+            cat {V}/{log}
+            """
+
 rule extract_sequences:
     input:
-        gff=rules.finalize_gff3.output.gff,
+        gff=FINAL_GFF,
         genome=MASKED
     output:
         cds=f"final_outputs/{SP}.v3.cds.fa",

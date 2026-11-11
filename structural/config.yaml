@@ -100,6 +100,40 @@ braker4_config:
 # directory (absolute path; only copied on the host, so no extra_binds needed)
 braker4_results: ""
 
+# ---------------------------------------------------------------- Helixer (optional)
+# helixer: true adds Helixer gene models at loci where BRAKER has no gene. Helixer
+# (deep learning, ab initio) runs on the unmasked genome; TSEBRA scores its models
+# with BRAKER's hints, and only supported ones at new loci are added (column 2 =
+# Helixer in the GFF3). BRAKER models are never changed.
+# Helixer uses a GPU when the node has one and the CPU otherwise (same image, same
+# predictions). helixer_gpu only decides whether the SLURM job asks for one
+# (helixer_partition, gres gpu:1). A. palmeri (384 Mb): 65 min on a V100S;
+# CPU ~2.5 h (one 15 Mb chromosome: 5.9 min, ~8 cores, 20 GB RAM).
+# With predictor: braker3 (one local run) Helixer runs on the node of the workflow,
+# on its GPU if it has one. Or run Helixer elsewhere and give its GFF3 in helixer_gff.
+helixer: false
+helixer_gff: ""                # Helixer GFF3 already made, in inputs/: skips Helixer
+helixer_image: images/helixer.sif   # docker://gglyptodon/helixer-docker:helixer_v0.3.7_cuda_12.2.2-cudnn8_1
+helixer_lineage: land_plant    # land_plant | vertebrate | invertebrate | fungi
+helixer_model_dir: ""          # models from fetch_helixer_models.py (absolute; add to extra_binds if
+                               # outside volume_name); "" = Helixer downloads them (needs internet)
+helixer_gpu: true
+helixer_partition: general-long-gpu
+helixer_threads: 8              # TensorFlow uses ~8 cores on CPU
+helixer_mem_mb: 64000
+helixer_extra_args: ""
+# Fraction of a Helixer model's introns that must be supported by hints (TSEBRA
+# intron_support; BRAKER uses 1.0). A. palmeri: 1.0 adds 392 genes, 0.5 adds 671.
+helixer_intron_support: 0.5
+
+# ---------------------------------------------------------------- UTRs (optional)
+# add_utrs: true adds 5'/3' UTRs to the final GFF3 (otherwise exons = CDS). Per
+# transcript side: BRAKER's UTR (from the RNA-seq / Iso-Seq transcripts, BRAKER4
+# braker_utr.gtf), else, with helixer: true, the UTR of the Helixer model with the
+# identical CDS. Column 2 of each UTR line gives its source (BRAKER4 or Helixer).
+# BRAKER3 writes braker_utr.gtf only with --addUTR=on: without it only Helixer UTRs.
+add_utrs: false
+
 # ---------------------------------------------------------------- QC
 # Local BUSCO lineage directory (compute nodes usually have no internet)
 busco_lineage: busco_downloads/lineages/poales_odb10

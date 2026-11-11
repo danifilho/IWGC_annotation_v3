@@ -5,7 +5,7 @@ Structural and functional genome annotation for the **International Weed Genomic
 | Module | What it does | Main outputs |
 |---|---|---|
 | **Pre-processing** (`pre_processing_IWGC.py`, BRAKER4 only) | trim Illumina RNA-seq: FastQC → fastp → FastQC → MultiQC | trimmed read pairs, QC reports |
-| **Structural** | **EDTA** TE annotation → bedtools soft-mask → **BRAKER3** with proteins + **PacBio Iso-Seq** reads, or **BRAKER4** with proteins + trimmed **Illumina RNA-seq** (+ optional Iso-Seq, dual mode) → GFF3 with IWGC gene IDs → BUSCO | `<SP>.v3.gff3`, proteins, CDS, BUSCO |
+| **Structural** | **EDTA** TE annotation → bedtools soft-mask → **BRAKER3** with proteins + **PacBio Iso-Seq** reads, or **BRAKER4** with proteins + trimmed **Illumina RNA-seq** (+ optional Iso-Seq, dual mode) → optional **Helixer** genes at loci BRAKER missed → GFF3 with IWGC gene IDs (+ optional UTRs) → BUSCO | `<SP>.v3.gff3`, proteins, CDS, BUSCO |
 | **Functional** | MMseqs2 (NCBI, UniRef50, herbicide resistance), InterProScan, Pfam, SignalP/TargetP, MultiLoc2 | `functional_annotation.tsv`, IWGC-format `<SP>.functional.gff3` |
 
 On *Phalaris minor* (4.9 Gb, allotetraploid), BRAKER3 reached the same BUSCO completeness as the earlier MAKER pipeline (**95.9 % vs 96.1 %**) in **~11 h instead of ~5 days**.
@@ -63,6 +63,7 @@ singularity pull busco_v6.1.0.sif   docker://ezlabgva/busco:v6.1.0_cv2      # *_
 singularity pull bedtools.sif       docker://quay.io/biocontainers/bedtools:2.31.1--h13024bc_3
 cp /mnt/research/Weed_lab/projects/Run_EDTA/images/EDTA_1.9.6.sif EDTA.sif  # EDTA 1.9.6 + GNU grep/sed/gawk
 singularity pull -U gffread.sif     library://danifilho/functional_annotation_images/gffread:latest
+singularity pull helixer.sif        docker://gglyptodon/helixer-docker:helixer_v0.3.7_cuda_12.2.2-cudnn8_1  # only for helixer: true
 
 # functional/images
 cd ../../functional && mkdir -p images && cd images
@@ -123,6 +124,15 @@ busco_image: images/busco_v6.1.0.sif          # *_odb12 lineages need BUSCO 6
 braker4_results: ""                           # or a finished BRAKER4 output/<SP>/results to reuse
 ```
 
+Optional, with either predictor:
+
+```yaml
+helixer: true                                 # add Helixer genes where BRAKER has none (TSEBRA-filtered)
+helixer_model_dir: /path/to/Helixer/models    # fetch_helixer_models.py; GPU if the node has one, else CPU
+helixer_gpu: true                             # ask SLURM for a GPU (false: CPU only, ~2.3x slower)
+add_utrs: true                                # UTRs: BRAKER's (RNA-seq/Iso-Seq), else Helixer's on the same CDS
+```
+
 Edit `functional/config.yaml`:
 
 ```yaml
@@ -166,7 +176,7 @@ Optional, needs internet: fill NCBI GeneIDs in the functional GFF3 with `scripts
 
 | File | Content |
 |---|---|
-| `structural/final_outputs/<SP>.v3.gff3` | gene models with IWGC IDs |
+| `structural/final_outputs/<SP>.v3.gff3` | gene models with IWGC IDs; column 2 = `BRAKER4`/`BRAKER3` or `Helixer` per line |
 | `structural/final_outputs/<SP>.v3.{proteins,cds,longest.proteins}.fa` | sequences |
 | `structural/busco_outputs/<SP>.v3.busco_summary.txt` | BUSCO |
 | `functional/functional_outputs/functional_annotation.tsv` | one row per protein: position, NCBI / UniRef50 / herbicide-resistance hits, InterPro, GO, Pfam, SignalP/TargetP, MultiLoc2 |
